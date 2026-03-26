@@ -1,0 +1,26 @@
+{
+  "name": "peerass",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "pm2:start": "npx pm2 start ecosystem.config.js",
+    "pm2:restart": "npx pm2 restart peerass",
+    "pm2:stop": "npx pm2 stop peerass",
+    "pm2:logs": "npx pm2 logs peerass --lines 200",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "pm2": "^6.0.14"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "private": true
+}

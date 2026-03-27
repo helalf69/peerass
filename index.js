@@ -1,12 +1,13 @@
 const path = require("path");
 const express = require("express");
 require("dotenv").config();
-const { get, initDatabase, verifyPassword } = require("./private/dbInit");
+const { get, initDatabase, verifyPassword, run, hashPassword } = require("./private/dbInit");
 
 const app = express();
 
 let db;
 const port = Number(process.env.PORT || 3001);
+const DEFAULT_PASSWORD = "Java5cript";
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
@@ -40,10 +41,46 @@ app.post("/api/login", async (req, res) => {
         idUser: user.idUser,
         name: user.Name,
         isAdmin: Boolean(user.isAdmin),
+        mustChangePassword: verifyPassword(DEFAULT_PASSWORD, user.Password),
       },
     });
   } catch (_err) {
     return res.status(500).json({ ok: false, message: "Login failed." });
+  }
+});
+
+app.post("/api/change-password", async (req, res) => {
+  try {
+    const idUser = Number(req.body.idUser);
+    const oldPassword = String(req.body.oldPassword || "");
+    const newPassword = String(req.body.newPassword || "");
+
+    if (!Number.isFinite(idUser) || idUser <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid user." });
+    }
+    if (!oldPassword || !newPassword) {
+      return res.status(400).json({ ok: false, message: "Missing password fields." });
+    }
+    if (newPassword.length < 8) {
+      return res.status(400).json({ ok: false, message: "Password must be at least 8 characters." });
+    }
+    if (newPassword === DEFAULT_PASSWORD) {
+      return res.status(400).json({ ok: false, message: "Choose a non-default password." });
+    }
+
+    const user = await get(db, `SELECT idUser, Password FROM user WHERE idUser = ?`, [idUser]);
+    if (!user) return res.status(404).json({ ok: false, message: "User not found." });
+
+    if (!verifyPassword(oldPassword, user.Password)) {
+      return res.status(401).json({ ok: false, message: "Old password is incorrect." });
+    }
+
+    const newHash = hashPassword(newPassword);
+    await run(db, `UPDATE user SET Password = ? WHERE idUser = ?`, [newHash, idUser]);
+
+    return res.json({ ok: true });
+  } catch (_err) {
+    return res.status(500).json({ ok: false, message: "Password change failed." });
   }
 });
 

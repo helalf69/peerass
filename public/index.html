@@ -16,10 +16,21 @@
     />
 
     <nav class="top-actions" aria-label="Quick actions">
-      <button type="button" class="button button-sm" id="open-login" aria-controls="login-overlay">
-        🔓 Login
+      <span class="whoami hidden" id="whoami" aria-live="polite"></span>
+
+      <a class="button button-sm hidden" id="admin-link" href="/admin.html" title="Admin">🅰️</a>
+
+      <button
+        type="button"
+        class="button button-sm"
+        id="auth-button"
+        aria-controls="login-overlay"
+        title="Login / Logout"
+      >
+        🔓
       </button>
-      <a class="button button-sm" href="/">🏠 Home</a>
+
+      <a class="button button-sm" href="/" title="Home">🏠</a>
     </nav>
 
     <main class="page">
@@ -53,22 +64,97 @@
       </div>
     </div>
 
+    <div
+      class="overlay hidden"
+      id="pw-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="pw-title"
+    >
+      <div class="overlay-card">
+        <h2 id="pw-title">Change password</h2>
+        <form id="pw-form" class="login-form">
+          <label>
+            Old password
+            <input type="password" name="oldPassword" autocomplete="current-password" required />
+          </label>
+          <label>
+            New password
+            <input type="password" name="newPassword" autocomplete="new-password" required />
+          </label>
+          <label>
+            Confirm password
+            <input type="password" name="confirmPassword" autocomplete="new-password" required />
+          </label>
+          <p id="pw-message" class="login-message" aria-live="polite"></p>
+          <div class="overlay-actions">
+            <button type="submit" class="button button-sm primary">Update</button>
+            <button type="button" class="button button-sm" id="pw-ignore">Ignore</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <script>
       const overlay = document.getElementById("login-overlay");
-      const openBtn = document.getElementById("open-login");
       const closeBtn = document.getElementById("close-login");
       const form = document.getElementById("login-form");
       const msg = document.getElementById("login-message");
+      const authBtn = document.getElementById("auth-button");
+      const whoami = document.getElementById("whoami");
+      const adminLink = document.getElementById("admin-link");
+
+      const pwOverlay = document.getElementById("pw-overlay");
+      const pwForm = document.getElementById("pw-form");
+      const pwMsg = document.getElementById("pw-message");
+      const pwIgnore = document.getElementById("pw-ignore");
+
+      let currentUser = null;
 
       function toggleOverlay(show) {
         overlay.classList.toggle("hidden", !show);
       }
 
-      openBtn.addEventListener("click", () => toggleOverlay(true));
+      function togglePwOverlay(show) {
+        pwOverlay.classList.toggle("hidden", !show);
+      }
+
+      function setAuthedUI(user) {
+        currentUser = user || null;
+
+        const authed = Boolean(currentUser);
+        whoami.classList.toggle("hidden", !authed);
+        adminLink.classList.toggle("hidden", !(authed && currentUser.isAdmin));
+
+        if (authed) {
+          whoami.textContent = currentUser.name;
+          authBtn.textContent = "🔒";
+          authBtn.setAttribute("aria-controls", "");
+        } else {
+          whoami.textContent = "";
+          authBtn.textContent = "🔓";
+          authBtn.setAttribute("aria-controls", "login-overlay");
+        }
+      }
+
+      function logout() {
+        setAuthedUI(null);
+        togglePwOverlay(false);
+      }
+
+      authBtn.addEventListener("click", () => {
+        if (currentUser) return logout();
+        toggleOverlay(true);
+      });
+
       closeBtn.addEventListener("click", () => toggleOverlay(false));
       overlay.addEventListener("click", (e) => {
         if (e.target === overlay) toggleOverlay(false);
       });
+      pwOverlay.addEventListener("click", (e) => {
+        if (e.target === pwOverlay) togglePwOverlay(false);
+      });
+      pwIgnore.addEventListener("click", () => togglePwOverlay(false));
 
       form.addEventListener("submit", async (e) => {
         e.preventDefault();
@@ -95,13 +181,74 @@
             return;
           }
 
-          msg.textContent = `Welcome ${data.user.name}${data.user.isAdmin ? " (admin)" : ""}.`;
+          setAuthedUI(data.user);
+          toggleOverlay(false);
+          msg.textContent = "";
           form.reset();
+
+          if (data.user.mustChangePassword) {
+            pwForm.reset();
+            pwMsg.textContent = "You are using the default password. Please change it.";
+            pwMsg.classList.remove("error");
+            togglePwOverlay(true);
+          }
         } catch (_err) {
           msg.textContent = "Network error. Try again.";
           msg.classList.add("error");
         }
       });
+
+      pwForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        pwMsg.textContent = "Updating...";
+        pwMsg.classList.remove("error");
+
+        if (!currentUser) {
+          pwMsg.textContent = "You must be logged in.";
+          pwMsg.classList.add("error");
+          return;
+        }
+
+        const fd = new FormData(pwForm);
+        const oldPassword = String(fd.get("oldPassword") || "");
+        const newPassword = String(fd.get("newPassword") || "");
+        const confirmPassword = String(fd.get("confirmPassword") || "");
+
+        if (newPassword !== confirmPassword) {
+          pwMsg.textContent = "New password and confirm password do not match.";
+          pwMsg.classList.add("error");
+          return;
+        }
+
+        try {
+          const response = await fetch("/api/change-password", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              idUser: currentUser.idUser,
+              oldPassword,
+              newPassword,
+            }),
+          });
+          const data = await response.json();
+          if (!response.ok || !data.ok) {
+            pwMsg.textContent = data.message || "Password change failed.";
+            pwMsg.classList.add("error");
+            return;
+          }
+
+          pwMsg.textContent = "Password updated.";
+          togglePwOverlay(false);
+          // Don’t keep implying password is default after a successful change.
+          setAuthedUI({ ...currentUser, mustChangePassword: false });
+        } catch (_err) {
+          pwMsg.textContent = "Network error. Try again.";
+          pwMsg.classList.add("error");
+        }
+      });
+
+      // Initial UI
+      setAuthedUI(null);
     </script>
   </body>
 </html>

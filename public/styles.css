@@ -96,8 +96,26 @@ body {
   right: 14px;
   z-index: 3;
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.whoami {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 750;
+  color: rgba(74, 36, 24, 0.82);
+  background: rgba(255, 251, 247, 0.78);
+  border: 1px solid rgba(112, 54, 35, 0.16);
+  padding: 6px 10px;
+  border-radius: 999px;
+}
+
+.hidden {
+  display: none !important;
 }
 
 .button {

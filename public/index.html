@@ -3,11 +3,106 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>peerass</title>
+    <title>Peer assessment</title>
+    <link rel="icon" href="/include/favicon.png" />
+    <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <h1>peerass</h1>
-    <p>If you can see this, PM2 is running the site.</p>
+    <img
+      class="logo-backdrop"
+      src="/include/logo.png"
+      alt=""
+      aria-hidden="true"
+    />
+
+    <nav class="top-actions" aria-label="Quick actions">
+      <button type="button" class="button button-sm" id="open-login" aria-controls="login-overlay">
+        🔓 Login
+      </button>
+      <a class="button button-sm" href="/">🏠 Home</a>
+    </nav>
+
+    <main class="page">
+      <section class="content">
+        <h1 class="title">Peer assessment</h1>
+        <p class="subtitle">
+          A clean, peach-themed landing page with a contrasting
+          <span class="accent">accent</span> palette.
+        </p>
+      </section>
+    </main>
+
+    <div class="overlay hidden" id="login-overlay" role="dialog" aria-modal="true" aria-labelledby="login-title">
+      <div class="overlay-card">
+        <h2 id="login-title">Login</h2>
+        <form id="login-form" class="login-form">
+          <label>
+            Name
+            <input type="text" name="name" autocomplete="username" required />
+          </label>
+          <label>
+            Password
+            <input type="password" name="password" autocomplete="current-password" required />
+          </label>
+          <p id="login-message" class="login-message" aria-live="polite"></p>
+          <div class="overlay-actions">
+            <button type="submit" class="button button-sm primary">Sign in</button>
+            <button type="button" class="button button-sm" id="close-login">Close</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <script>
+      const overlay = document.getElementById("login-overlay");
+      const openBtn = document.getElementById("open-login");
+      const closeBtn = document.getElementById("close-login");
+      const form = document.getElementById("login-form");
+      const msg = document.getElementById("login-message");
+
+      function toggleOverlay(show) {
+        overlay.classList.toggle("hidden", !show);
+      }
+
+      openBtn.addEventListener("click", () => toggleOverlay(true));
+      closeBtn.addEventListener("click", () => toggleOverlay(false));
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) toggleOverlay(false);
+      });
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        msg.textContent = "Signing in...";
+        msg.classList.remove("error");
+
+        const formData = new FormData(form);
+        const payload = {
+          name: formData.get("name"),
+          password: formData.get("password"),
+        };
+
+        try {
+          const response = await fetch("/api/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const data = await response.json();
+
+          if (!response.ok || !data.ok) {
+            msg.textContent = data.message || "Login failed.";
+            msg.classList.add("error");
+            return;
+          }
+
+          msg.textContent = `Welcome ${data.user.name}${data.user.isAdmin ? " (admin)" : ""}.`;
+          form.reset();
+        } catch (_err) {
+          msg.textContent = "Network error. Try again.";
+          msg.classList.add("error");
+        }
+      });
+    </script>
   </body>
 </html>
 

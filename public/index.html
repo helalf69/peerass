@@ -108,6 +108,7 @@
       const pwForm = document.getElementById("pw-form");
       const pwMsg = document.getElementById("pw-message");
       const pwIgnore = document.getElementById("pw-ignore");
+      const USER_STORE_KEY = "peerassUser";
 
       let currentUser = null;
 
@@ -121,6 +122,11 @@
 
       function setAuthedUI(user) {
         currentUser = user || null;
+        if (currentUser) {
+          localStorage.setItem(USER_STORE_KEY, JSON.stringify(currentUser));
+        } else {
+          localStorage.removeItem(USER_STORE_KEY);
+        }
 
         const authed = Boolean(currentUser);
         whoami.classList.toggle("hidden", !authed);
@@ -248,7 +254,12 @@
       });
 
       // Initial UI
-      setAuthedUI(null);
+      try {
+        const raw = localStorage.getItem(USER_STORE_KEY);
+        setAuthedUI(raw ? JSON.parse(raw) : null);
+      } catch (_err) {
+        setAuthedUI(null);
+      }
     </script>
   </body>
 </html>

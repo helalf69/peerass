@@ -192,6 +192,15 @@ body {
   color: var(--text);
 }
 
+.login-form select {
+  border: 1px solid rgba(112, 54, 35, 0.25);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font: inherit;
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--text);
+}
+
 .overlay-actions {
   margin-top: 4px;
   display: flex;
@@ -206,6 +215,24 @@ body {
 
 .login-message.error {
   color: #aa2140;
+}
+
+.admin-form {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(112, 54, 35, 0.25);
+}
+
+.admin-inline {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.admin-inline input {
+  min-width: 220px;
+  flex: 1 1 220px;
 }
 
 @media (prefers-reduced-transparency: reduce) {

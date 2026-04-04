@@ -17,11 +17,182 @@
     <main class="page">
       <section class="content">
         <h1 class="title">Admin</h1>
-        <p class="subtitle">
-          Admin page placeholder. Next step would be wiring real admin actions (user management, resets, etc.).
-        </p>
+        <p class="subtitle">Manage your subjects and register users into your own subjects.</p>
+
+        <form id="add-subject-form" class="login-form admin-form">
+          <label for="new-subject-name">Add subject</label>
+          <div class="admin-inline">
+            <input
+              id="new-subject-name"
+              name="subName"
+              type="text"
+              placeholder="Subject name"
+              autocomplete="off"
+              required
+            />
+            <button type="submit" class="button button-sm primary">Add subject</button>
+          </div>
+          <p id="subject-message" class="login-message" aria-live="polite"></p>
+        </form>
+
+        <form id="add-user-form" class="login-form admin-form">
+          <label for="new-user-name">Add user</label>
+          <div class="admin-inline">
+            <input
+              id="new-user-name"
+              name="name"
+              type="text"
+              placeholder="User name"
+              autocomplete="off"
+              required
+            />
+            <select id="subject-select" name="idSub" required></select>
+            <button type="submit" class="button button-sm primary">Register</button>
+          </div>
+          <p id="admin-message" class="login-message" aria-live="polite"></p>
+        </form>
+
+        <form id="copy-form" class="login-form admin-form">
+          <label for="copy-source-subject">Copy names to a new subject</label>
+          <div class="admin-inline">
+            <select id="copy-source-subject" name="sourceIdSub" required></select>
+            <input
+              id="copy-new-subject-name"
+              name="newSubName"
+              type="text"
+              placeholder="New subject name"
+              autocomplete="off"
+              required
+            />
+            <button type="submit" class="button button-sm primary">Copy names</button>
+          </div>
+          <p id="copy-message" class="login-message" aria-live="polite"></p>
+        </form>
       </section>
     </main>
+
+    <script>
+      const USER_STORE_KEY = "peerassUser";
+      let currentUser = null;
+      try {
+        currentUser = JSON.parse(localStorage.getItem(USER_STORE_KEY) || "null");
+      } catch (_err) {
+        currentUser = null;
+      }
+      if (!currentUser || !currentUser.isAdmin) {
+        window.location.href = "/";
+      }
+
+      const userForm = document.getElementById("add-user-form");
+      const subjectForm = document.getElementById("add-subject-form");
+      const copyForm = document.getElementById("copy-form");
+      const message = document.getElementById("admin-message");
+      const subjectMessage = document.getElementById("subject-message");
+      const copyMessage = document.getElementById("copy-message");
+      const nameInput = document.getElementById("new-user-name");
+      const subjectSelect = document.getElementById("subject-select");
+      const copySourceSelect = document.getElementById("copy-source-subject");
+      const newSubjectInput = document.getElementById("new-subject-name");
+      const copyNewSubjectInput = document.getElementById("copy-new-subject-name");
+
+      function setMsg(el, text, isError = false) {
+        el.textContent = text;
+        el.classList.toggle("error", isError);
+      }
+
+      async function loadSubjects() {
+        const response = await fetch(`/api/admin/subjects?actorId=${encodeURIComponent(currentUser.idUser)}`);
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.message || "Could not load subjects.");
+
+        const subjects = data.subjects || [];
+        const options = subjects.map(
+          (s) => `<option value="${s.idSub}">${s.subName}</option>`
+        );
+        subjectSelect.innerHTML = options.length
+          ? options.join("")
+          : `<option value="">No subject yet</option>`;
+        copySourceSelect.innerHTML = options.length
+          ? options.join("")
+          : `<option value="">No subject yet</option>`;
+      }
+
+      subjectForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        setMsg(subjectMessage, "Adding subject...");
+
+        const subName = newSubjectInput.value.trim();
+        try {
+          const response = await fetch("/api/admin/add-subject", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ actorId: currentUser.idUser, subName }),
+          });
+          const data = await response.json();
+          if (!response.ok || !data.ok) {
+            setMsg(subjectMessage, data.message || "Could not add subject.", true);
+            return;
+          }
+          setMsg(subjectMessage, data.message || "Subject added.");
+          subjectForm.reset();
+          await loadSubjects();
+          newSubjectInput.focus();
+        } catch (_err) {
+          setMsg(subjectMessage, "Network error. Try again.", true);
+        }
+      });
+
+      userForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        setMsg(message, "Registering...");
+        const name = nameInput.value.trim();
+        const idSub = Number(subjectSelect.value);
+        try {
+          const response = await fetch("/api/admin/add-user", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ actorId: currentUser.idUser, name, idSub }),
+          });
+          const data = await response.json();
+          if (!response.ok || !data.ok) {
+            setMsg(message, data.message || "Could not register user.", true);
+            return;
+          }
+          setMsg(message, data.message || "User registered.");
+          userForm.reset();
+          await loadSubjects();
+          nameInput.focus();
+        } catch (_err) {
+          setMsg(message, "Network error. Try again.", true);
+        }
+      });
+
+      copyForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        setMsg(copyMessage, "Copying...");
+        const sourceIdSub = Number(copySourceSelect.value);
+        const newSubName = copyNewSubjectInput.value.trim();
+        try {
+          const response = await fetch("/api/admin/copy-subject-users", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ actorId: currentUser.idUser, sourceIdSub, newSubName }),
+          });
+          const data = await response.json();
+          if (!response.ok || !data.ok) {
+            setMsg(copyMessage, data.message || "Could not copy names.", true);
+            return;
+          }
+          setMsg(copyMessage, data.message || "Copied.");
+          copyForm.reset();
+          await loadSubjects();
+        } catch (_err) {
+          setMsg(copyMessage, "Network error. Try again.", true);
+        }
+      });
+
+      loadSubjects().catch((err) => setMsg(subjectMessage, err.message, true));
+    </script>
   </body>
 </html>
 

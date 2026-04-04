@@ -53,6 +53,15 @@ function get(db, sql, params = []) {
   });
 }
 
+function all(db, sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) return reject(err);
+      resolve(rows);
+    });
+  });
+}
+
 async function initDatabase() {
   if (!fs.existsSync(privateDir)) fs.mkdirSync(privateDir, { recursive: true });
 
@@ -67,6 +76,22 @@ async function initDatabase() {
       isAdmin INTEGER NOT NULL DEFAULT 0,
       Name TEXT NOT NULL UNIQUE,
       Password TEXT NOT NULL DEFAULT '${defaultPasswordHash}'
+    )`
+  );
+  try {
+    await run(db, `ALTER TABLE user ADD COLUMN idSub INTEGER NOT NULL DEFAULT 0`);
+  } catch (err) {
+    if (!String(err.message || "").includes("duplicate column name")) throw err;
+  }
+
+  await run(
+    db,
+    `CREATE TABLE IF NOT EXISTS subject (
+      idSub INTEGER PRIMARY KEY AUTOINCREMENT,
+      idUser INTEGER NOT NULL,
+      subName TEXT NOT NULL,
+      UNIQUE(idUser, subName),
+      FOREIGN KEY(idUser) REFERENCES user(idUser)
     )`
   );
 
@@ -99,6 +124,7 @@ module.exports = {
   verifyPassword,
   run,
   get,
+  all,
   initDatabase,
 };
 

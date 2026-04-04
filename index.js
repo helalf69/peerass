@@ -1,7 +1,7 @@
 const path = require("path");
 const express = require("express");
 require("dotenv").config();
-const { get, initDatabase, verifyPassword, run, hashPassword } = require("./private/dbInit");
+const { get, all, initDatabase, verifyPassword, run, hashPassword } = require("./private/dbInit");
 
 const app = express();
 
@@ -11,6 +11,14 @@ const DEFAULT_PASSWORD = "Java5cript";
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+async function requireAdminActor(actorId) {
+  const id = Number(actorId);
+  if (!Number.isFinite(id) || id <= 0) return { ok: false, status: 400, message: "Invalid actor." };
+  const actor = await get(db, `SELECT idUser, isAdmin FROM user WHERE idUser = ?`, [id]);
+  if (!actor || !actor.isAdmin) return { ok: false, status: 403, message: "Admin access required." };
+  return { ok: true, actor };
+}
 
 // Health check for process managers / uptime monitors.
 app.get("/health", (_req, res) => {
@@ -26,7 +34,7 @@ app.post("/api/login", async (req, res) => {
       return res.status(400).json({ ok: false, message: "Name and password are required." });
     }
 
-    const user = await get(db, `SELECT idUser, isAdmin, Name, Password FROM user WHERE Name = ?`, [name]);
+    const user = await get(db, `SELECT idUser, isAdmin, Name, Password, idSub FROM user WHERE Name = ?`, [name]);
     if (!user) {
       return res.status(401).json({ ok: false, message: "Invalid credentials." });
     }
@@ -41,6 +49,7 @@ app.post("/api/login", async (req, res) => {
         idUser: user.idUser,
         name: user.Name,
         isAdmin: Boolean(user.isAdmin),
+        idSub: Number(user.idSub || 0),
         mustChangePassword: verifyPassword(DEFAULT_PASSWORD, user.Password),
       },
     });
@@ -81,6 +90,133 @@ app.post("/api/change-password", async (req, res) => {
     return res.json({ ok: true });
   } catch (_err) {
     return res.status(500).json({ ok: false, message: "Password change failed." });
+  }
+});
+
+app.post("/api/admin/add-user", async (req, res) => {
+  try {
+    const auth = await requireAdminActor(req.body.actorId);
+    if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
+
+    const name = String(req.body.name || "").trim();
+    const idSub = Number(req.body.idSub || 0);
+    if (!name) {
+      return res.status(400).json({ ok: false, message: "Name is required." });
+    }
+    if (name.length < 2) {
+      return res.status(400).json({ ok: false, message: "Name must be at least 2 characters." });
+    }
+
+    const existing = await get(db, `SELECT idUser FROM user WHERE Name = ?`, [name]);
+    if (existing) {
+      return res.status(409).json({ ok: false, message: "User already exists." });
+    }
+    if (!Number.isFinite(idSub) || idSub <= 0) {
+      return res.status(400).json({ ok: false, message: "Select a subject." });
+    }
+    const subject = await get(db, `SELECT idSub FROM subject WHERE idSub = ? AND idUser = ?`, [
+      idSub,
+      auth.actor.idUser,
+    ]);
+    if (!subject) {
+      return res.status(403).json({ ok: false, message: "Subject not available for this admin." });
+    }
+
+    const passwordHash = hashPassword(DEFAULT_PASSWORD);
+    await run(db, `INSERT INTO user (Name, Password, idSub) VALUES (?, ?, ?)`, [name, passwordHash, idSub]);
+    return res.json({ ok: true, message: `User ${name} registered.` });
+  } catch (_err) {
+    return res.status(500).json({ ok: false, message: "Could not add user." });
+  }
+});
+
+app.get("/api/admin/subjects", async (req, res) => {
+  try {
+    const auth = await requireAdminActor(req.query.actorId);
+    if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
+
+    const subjects = await all(
+      db,
+      `SELECT idSub, subName FROM subject WHERE idUser = ? ORDER BY subName COLLATE NOCASE ASC`,
+      [auth.actor.idUser]
+    );
+    return res.json({ ok: true, subjects });
+  } catch (_err) {
+    return res.status(500).json({ ok: false, message: "Could not load subjects." });
+  }
+});
+
+app.post("/api/admin/add-subject", async (req, res) => {
+  try {
+    const auth = await requireAdminActor(req.body.actorId);
+    if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
+
+    const subName = String(req.body.subName || "").trim();
+    if (!subName) return res.status(400).json({ ok: false, message: "Subject name is required." });
+
+    await run(db, `INSERT INTO subject (idUser, subName) VALUES (?, ?)`, [auth.actor.idUser, subName]);
+    return res.json({ ok: true, message: `Subject ${subName} added.` });
+  } catch (err) {
+    if (String(err.message || "").includes("UNIQUE")) {
+      return res.status(409).json({ ok: false, message: "Subject already exists." });
+    }
+    return res.status(500).json({ ok: false, message: "Could not add subject." });
+  }
+});
+
+app.post("/api/admin/copy-subject-users", async (req, res) => {
+  try {
+    const auth = await requireAdminActor(req.body.actorId);
+    if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
+
+    const sourceIdSub = Number(req.body.sourceIdSub);
+    const newSubName = String(req.body.newSubName || "").trim();
+    if (!Number.isFinite(sourceIdSub) || sourceIdSub <= 0) {
+      return res.status(400).json({ ok: false, message: "Choose source subject." });
+    }
+    if (!newSubName) return res.status(400).json({ ok: false, message: "New subject name is required." });
+
+    const source = await get(db, `SELECT idSub FROM subject WHERE idSub = ? AND idUser = ?`, [
+      sourceIdSub,
+      auth.actor.idUser,
+    ]);
+    if (!source) return res.status(403).json({ ok: false, message: "Source subject not available." });
+
+    const insertSub = await run(db, `INSERT INTO subject (idUser, subName) VALUES (?, ?)`, [
+      auth.actor.idUser,
+      newSubName,
+    ]);
+    const newIdSub = insertSub.lastID;
+
+    const sourceUsers = await all(db, `SELECT Name FROM user WHERE idSub = ? ORDER BY idUser ASC`, [sourceIdSub]);
+    for (const row of sourceUsers) {
+      const baseName = `${row.Name}_${newSubName}`;
+      let candidate = baseName;
+      let suffix = 1;
+      // keep username unique when copying
+      // eslint-disable-next-line no-await-in-loop
+      while (await get(db, `SELECT idUser FROM user WHERE Name = ?`, [candidate])) {
+        suffix += 1;
+        candidate = `${baseName}_${suffix}`;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await run(db, `INSERT INTO user (Name, Password, idSub) VALUES (?, ?, ?)`, [
+        candidate,
+        hashPassword(DEFAULT_PASSWORD),
+        newIdSub,
+      ]);
+    }
+
+    return res.json({
+      ok: true,
+      message: `Created ${newSubName} and copied ${sourceUsers.length} user names.`,
+      idSub: newIdSub,
+    });
+  } catch (err) {
+    if (String(err.message || "").includes("UNIQUE")) {
+      return res.status(409).json({ ok: false, message: "New subject name already exists." });
+    }
+    return res.status(500).json({ ok: false, message: "Could not copy names." });
   }
 });
 

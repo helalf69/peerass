@@ -69,6 +69,9 @@ async function initDatabase() {
 
   const defaultPasswordHash = hashWithSalt(DEFAULT_PASSWORD, DEFAULT_SALT);
 
+  await run(db, "PRAGMA foreign_keys = ON");
+
+  // Create user table if it doesn't exist (new schema: no idSub).
   await run(
     db,
     `CREATE TABLE IF NOT EXISTS user (
@@ -78,12 +81,8 @@ async function initDatabase() {
       Password TEXT NOT NULL DEFAULT '${defaultPasswordHash}'
     )`
   );
-  try {
-    await run(db, `ALTER TABLE user ADD COLUMN idSub INTEGER NOT NULL DEFAULT 0`);
-  } catch (err) {
-    if (!String(err.message || "").includes("duplicate column name")) throw err;
-  }
 
+  // Create (or keep) subject table (depends on user).
   await run(
     db,
     `CREATE TABLE IF NOT EXISTS subject (
@@ -94,6 +93,57 @@ async function initDatabase() {
       FOREIGN KEY(idUser) REFERENCES user(idUser)
     )`
   );
+
+  // Join table connecting users <-> subjects.
+  await run(
+    db,
+    `CREATE TABLE IF NOT EXISTS userSubject (
+      idUserSub INTEGER PRIMARY KEY AUTOINCREMENT,
+      idUser INTEGER NOT NULL,
+      idSub INTEGER NOT NULL,
+      UNIQUE(idUser, idSub),
+      FOREIGN KEY(idUser) REFERENCES user(idUser) ON DELETE CASCADE,
+      FOREIGN KEY(idSub) REFERENCES subject(idSub) ON DELETE CASCADE
+    )`
+  );
+
+  // If an older DB had user.idSub, migrate it into userSubject and rebuild user table without idSub.
+  const userCols = await all(db, `PRAGMA table_info(user)`);
+  const hasLegacyIdSub = userCols.some((c) => c && c.name === "idSub");
+  if (hasLegacyIdSub) {
+    await run(db, "BEGIN");
+    try {
+      // Migrate legacy user.idSub to userSubject (ignore 0 / unset).
+      await run(
+        db,
+        `INSERT OR IGNORE INTO userSubject (idUser, idSub)
+         SELECT idUser, idSub FROM user WHERE idSub IS NOT NULL AND idSub != 0`
+      );
+
+      // Rebuild user table without idSub.
+      await run(db, `ALTER TABLE user RENAME TO user_old`);
+      await run(
+        db,
+        `CREATE TABLE user (
+          idUser INTEGER PRIMARY KEY AUTOINCREMENT,
+          isAdmin INTEGER NOT NULL DEFAULT 0,
+          Name TEXT NOT NULL UNIQUE,
+          Password TEXT NOT NULL DEFAULT '${defaultPasswordHash}'
+        )`
+      );
+      await run(
+        db,
+        `INSERT INTO user (idUser, isAdmin, Name, Password)
+         SELECT idUser, isAdmin, Name, Password FROM user_old`
+      );
+      await run(db, `DROP TABLE user_old`);
+
+      await run(db, "COMMIT");
+    } catch (err) {
+      await run(db, "ROLLBACK");
+      throw err;
+    }
+  }
 
   // Keep password default encrypted, even for existing rows with legacy plain value.
   await run(

@@ -34,7 +34,7 @@ app.post("/api/login", async (req, res) => {
       return res.status(400).json({ ok: false, message: "Name and password are required." });
     }
 
-    const user = await get(db, `SELECT idUser, isAdmin, Name, Password, idSub FROM user WHERE Name = ?`, [name]);
+    const user = await get(db, `SELECT idUser, isAdmin, Name, Password FROM user WHERE Name = ?`, [name]);
     if (!user) {
       return res.status(401).json({ ok: false, message: "Invalid credentials." });
     }
@@ -49,7 +49,6 @@ app.post("/api/login", async (req, res) => {
         idUser: user.idUser,
         name: user.Name,
         isAdmin: Boolean(user.isAdmin),
-        idSub: Number(user.idSub || 0),
         mustChangePassword: verifyPassword(DEFAULT_PASSWORD, user.Password),
       },
     });
@@ -123,7 +122,8 @@ app.post("/api/admin/add-user", async (req, res) => {
     }
 
     const passwordHash = hashPassword(DEFAULT_PASSWORD);
-    await run(db, `INSERT INTO user (Name, Password, idSub) VALUES (?, ?, ?)`, [name, passwordHash, idSub]);
+    const ins = await run(db, `INSERT INTO user (Name, Password) VALUES (?, ?)`, [name, passwordHash]);
+    await run(db, `INSERT INTO userSubject (idUser, idSub) VALUES (?, ?)`, [ins.lastID, idSub]);
     return res.json({ ok: true, message: `User ${name} registered.` });
   } catch (_err) {
     return res.status(500).json({ ok: false, message: "Could not add user." });
@@ -188,7 +188,15 @@ app.post("/api/admin/copy-subject-users", async (req, res) => {
     ]);
     const newIdSub = insertSub.lastID;
 
-    const sourceUsers = await all(db, `SELECT Name FROM user WHERE idSub = ? ORDER BY idUser ASC`, [sourceIdSub]);
+    const sourceUsers = await all(
+      db,
+      `SELECT u.Name as Name
+       FROM user u
+       JOIN userSubject us ON us.idUser = u.idUser
+       WHERE us.idSub = ?
+       ORDER BY u.idUser ASC`,
+      [sourceIdSub]
+    );
     for (const row of sourceUsers) {
       const baseName = `${row.Name}_${newSubName}`;
       let candidate = baseName;
@@ -200,11 +208,11 @@ app.post("/api/admin/copy-subject-users", async (req, res) => {
         candidate = `${baseName}_${suffix}`;
       }
       // eslint-disable-next-line no-await-in-loop
-      await run(db, `INSERT INTO user (Name, Password, idSub) VALUES (?, ?, ?)`, [
+      const ins = await run(db, `INSERT INTO user (Name, Password) VALUES (?, ?)`, [
         candidate,
         hashPassword(DEFAULT_PASSWORD),
-        newIdSub,
       ]);
+      await run(db, `INSERT INTO userSubject (idUser, idSub) VALUES (?, ?)`, [ins.lastID, newIdSub]);
     }
 
     return res.json({
@@ -217,6 +225,35 @@ app.post("/api/admin/copy-subject-users", async (req, res) => {
       return res.status(409).json({ ok: false, message: "New subject name already exists." });
     }
     return res.status(500).json({ ok: false, message: "Could not copy names." });
+  }
+});
+
+app.get("/api/admin/users", async (req, res) => {
+  try {
+    const auth = await requireAdminActor(req.query.actorId);
+    if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
+
+    const rows = await all(
+      db,
+      `SELECT u.idUser, u.Name as name, u.Password as passwordHash, s.subName as subjectName
+       FROM user u
+       JOIN userSubject us ON us.idUser = u.idUser
+       JOIN subject s ON s.idSub = us.idSub
+       WHERE s.idUser = ? AND u.isAdmin = 0
+       ORDER BY s.subName COLLATE NOCASE ASC, u.Name COLLATE NOCASE ASC`,
+      [auth.actor.idUser]
+    );
+
+    const users = rows.map((r) => ({
+      idUser: r.idUser,
+      name: r.name,
+      subjectName: r.subjectName,
+      passwordChanged: !verifyPassword(DEFAULT_PASSWORD, r.passwordHash),
+    }));
+
+    return res.json({ ok: true, users });
+  } catch (_err) {
+    return res.status(500).json({ ok: false, message: "Could not load users." });
   }
 });
 

@@ -68,6 +68,23 @@
           </div>
           <p id="copy-message" class="login-message" aria-live="polite"></p>
         </form>
+
+        <section class="admin-form">
+          <h2 class="admin-h2">Users</h2>
+          <div class="table-wrap">
+            <table class="admin-table" aria-label="Users list">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Subject</th>
+                  <th>Password changed</th>
+                </tr>
+              </thead>
+              <tbody id="users-tbody"></tbody>
+            </table>
+          </div>
+          <p id="users-message" class="login-message" aria-live="polite"></p>
+        </section>
       </section>
     </main>
 
@@ -94,6 +111,8 @@
       const copySourceSelect = document.getElementById("copy-source-subject");
       const newSubjectInput = document.getElementById("new-subject-name");
       const copyNewSubjectInput = document.getElementById("copy-new-subject-name");
+      const usersTbody = document.getElementById("users-tbody");
+      const usersMessage = document.getElementById("users-message");
 
       function setMsg(el, text, isError = false) {
         el.textContent = text;
@@ -117,6 +136,39 @@
           : `<option value="">No subject yet</option>`;
       }
 
+      function esc(s) {
+        return String(s)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      async function loadUsers() {
+        setMsg(usersMessage, "Loading users...");
+        const response = await fetch(`/api/admin/users?actorId=${encodeURIComponent(currentUser.idUser)}`);
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.message || "Could not load users.");
+
+        const users = data.users || [];
+        usersTbody.innerHTML = users.length
+          ? users
+              .map((u) => {
+                const mark = u.passwordChanged ? "✓" : "✗";
+                const cls = u.passwordChanged ? "ok" : "bad";
+                return `<tr>
+                  <td>${esc(u.name)}</td>
+                  <td>${esc(u.subjectName)}</td>
+                  <td class="${cls}" aria-label="${u.passwordChanged ? "changed" : "default"}">${mark}</td>
+                </tr>`;
+              })
+              .join("")
+          : `<tr><td colspan="3">No users yet.</td></tr>`;
+
+        setMsg(usersMessage, `${users.length} user(s).`);
+      }
+
       subjectForm.addEventListener("submit", async (e) => {
         e.preventDefault();
         setMsg(subjectMessage, "Adding subject...");
@@ -136,6 +188,7 @@
           setMsg(subjectMessage, data.message || "Subject added.");
           subjectForm.reset();
           await loadSubjects();
+          await loadUsers();
           newSubjectInput.focus();
         } catch (_err) {
           setMsg(subjectMessage, "Network error. Try again.", true);
@@ -161,6 +214,7 @@
           setMsg(message, data.message || "User registered.");
           userForm.reset();
           await loadSubjects();
+          await loadUsers();
           nameInput.focus();
         } catch (_err) {
           setMsg(message, "Network error. Try again.", true);
@@ -186,12 +240,14 @@
           setMsg(copyMessage, data.message || "Copied.");
           copyForm.reset();
           await loadSubjects();
+          await loadUsers();
         } catch (_err) {
           setMsg(copyMessage, "Network error. Try again.", true);
         }
       });
 
       loadSubjects().catch((err) => setMsg(subjectMessage, err.message, true));
+      loadUsers().catch((err) => setMsg(usersMessage, err.message, true));
     </script>
   </body>
 </html>

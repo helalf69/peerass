@@ -235,6 +235,50 @@ body {
   flex: 1 1 220px;
 }
 
+.admin-h2 {
+  margin: 0 0 10px;
+  font-size: 1.05rem;
+  letter-spacing: -0.01em;
+}
+
+.table-wrap {
+  overflow: auto;
+  border-radius: 12px;
+  border: 1px solid rgba(112, 54, 35, 0.16);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 520px;
+}
+
+.admin-table th,
+.admin-table td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(112, 54, 35, 0.14);
+}
+
+.admin-table th {
+  font-size: 0.86rem;
+  color: rgba(74, 36, 24, 0.7);
+  background: rgba(255, 251, 247, 0.7);
+  position: sticky;
+  top: 0;
+}
+
+.admin-table td.ok {
+  color: #1b7a4a;
+  font-weight: 800;
+}
+
+.admin-table td.bad {
+  color: #aa2140;
+  font-weight: 800;
+}
+
 @media (prefers-reduced-transparency: reduce) {
   .content {
     backdrop-filter: none;

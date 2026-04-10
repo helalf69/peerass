@@ -2,6 +2,7 @@ const path = require("path");
 const express = require("express");
 require("dotenv").config();
 const { get, all, initDatabase, verifyPassword, run, hashPassword } = require("./private/dbInit");
+const { scheduleWeeklyInactiveUserCleanup } = require("./private/cleanup");
 
 const app = express();
 
@@ -42,6 +43,9 @@ app.post("/api/login", async (req, res) => {
     if (!verifyPassword(password, user.Password)) {
       return res.status(401).json({ ok: false, message: "Invalid credentials." });
     }
+
+    await run(db, `UPDATE user SET last_used = strftime('%s','now') WHERE idUser = ?`, [user.idUser]);
+    await run(db, `INSERT INTO user_activity (idUser, kind) VALUES (?, 'login')`, [user.idUser]);
 
     return res.json({
       ok: true,
@@ -85,6 +89,8 @@ app.post("/api/change-password", async (req, res) => {
 
     const newHash = hashPassword(newPassword);
     await run(db, `UPDATE user SET Password = ? WHERE idUser = ?`, [newHash, idUser]);
+    await run(db, `UPDATE user SET last_used = strftime('%s','now') WHERE idUser = ?`, [idUser]);
+    await run(db, `INSERT INTO user_activity (idUser, kind) VALUES (?, 'password_change')`, [idUser]);
 
     return res.json({ ok: true });
   } catch (_err) {
@@ -122,7 +128,11 @@ app.post("/api/admin/add-user", async (req, res) => {
     }
 
     const passwordHash = hashPassword(DEFAULT_PASSWORD);
-    const ins = await run(db, `INSERT INTO user (Name, Password) VALUES (?, ?)`, [name, passwordHash]);
+    const ins = await run(
+      db,
+      `INSERT INTO user (Name, Password, last_used) VALUES (?, ?, strftime('%s','now'))`,
+      [name, passwordHash]
+    );
     await run(db, `INSERT INTO userSubject (idUser, idSub) VALUES (?, ?)`, [ins.lastID, idSub]);
     return res.json({ ok: true, message: `User ${name} registered.` });
   } catch (_err) {
@@ -208,10 +218,11 @@ app.post("/api/admin/copy-subject-users", async (req, res) => {
         candidate = `${baseName}_${suffix}`;
       }
       // eslint-disable-next-line no-await-in-loop
-      const ins = await run(db, `INSERT INTO user (Name, Password) VALUES (?, ?)`, [
-        candidate,
-        hashPassword(DEFAULT_PASSWORD),
-      ]);
+      const ins = await run(
+        db,
+        `INSERT INTO user (Name, Password, last_used) VALUES (?, ?, strftime('%s','now'))`,
+        [candidate, hashPassword(DEFAULT_PASSWORD)]
+      );
       await run(db, `INSERT INTO userSubject (idUser, idSub) VALUES (?, ?)`, [ins.lastID, newIdSub]);
     }
 
@@ -273,6 +284,7 @@ app.get(/.*/, (_req, res) => {
 initDatabase()
   .then((database) => {
     db = database;
+    scheduleWeeklyInactiveUserCleanup(db);
     app.listen(port, "0.0.0.0", () => {
       // eslint-disable-next-line no-console
       console.log(`peerass listening on http://localhost:${port}`);

@@ -62,6 +62,11 @@ function all(db, sql, params = []) {
   });
 }
 
+async function tableExists(db, name) {
+  const row = await get(db, `SELECT name FROM sqlite_master WHERE type='table' AND name = ?`, [name]);
+  return Boolean(row);
+}
+
 async function initDatabase() {
   if (!fs.existsSync(privateDir)) fs.mkdirSync(privateDir, { recursive: true });
 
@@ -69,7 +74,9 @@ async function initDatabase() {
 
   const defaultPasswordHash = hashWithSalt(DEFAULT_PASSWORD, DEFAULT_SALT);
 
-  await run(db, "PRAGMA foreign_keys = ON");
+  // SQLite runs DDL outside of explicit transactions; keep FK enforcement off during init/migrations
+  // and turn it on at the end once schema is stable.
+  await run(db, "PRAGMA foreign_keys = OFF");
 
   // Create user table if it doesn't exist (new schema: no idSub).
   await run(
@@ -78,9 +85,21 @@ async function initDatabase() {
       idUser INTEGER PRIMARY KEY AUTOINCREMENT,
       isAdmin INTEGER NOT NULL DEFAULT 0,
       Name TEXT NOT NULL UNIQUE,
-      Password TEXT NOT NULL DEFAULT '${defaultPasswordHash}'
+      Password TEXT NOT NULL DEFAULT '${defaultPasswordHash}',
+      last_used INTEGER
     )`
   );
+
+  try {
+    await run(db, `ALTER TABLE user ADD COLUMN last_used INTEGER`);
+  } catch (err) {
+    if (!String(err.message || "").includes("duplicate column name")) throw err;
+  }
+
+  // Recover from a partially-applied legacy migration (user renamed to user_old, but app crashed before swap).
+  if ((await tableExists(db, "user_old")) && !(await tableExists(db, "user"))) {
+    await run(db, `ALTER TABLE user_old RENAME TO user`);
+  }
 
   // Create (or keep) subject table (depends on user).
   await run(
@@ -107,17 +126,31 @@ async function initDatabase() {
     )`
   );
 
+  // Placeholder for per-user activity rows; extend as the app grows.
+  await run(
+    db,
+    `CREATE TABLE IF NOT EXISTS user_activity (
+      idActivity INTEGER PRIMARY KEY AUTOINCREMENT,
+      idUser INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      FOREIGN KEY(idUser) REFERENCES user(idUser) ON DELETE CASCADE
+    )`
+  );
+
   // If an older DB had user.idSub, migrate it into userSubject and rebuild user table without idSub.
   const userCols = await all(db, `PRAGMA table_info(user)`);
   const hasLegacyIdSub = userCols.some((c) => c && c.name === "idSub");
   if (hasLegacyIdSub) {
-    await run(db, "BEGIN");
     try {
       // Migrate legacy user.idSub to userSubject (ignore 0 / unset).
       await run(
         db,
         `INSERT OR IGNORE INTO userSubject (idUser, idSub)
-         SELECT idUser, idSub FROM user WHERE idSub IS NOT NULL AND idSub != 0`
+         SELECT u.idUser, u.idSub
+         FROM user u
+         JOIN subject s ON s.idSub = u.idSub
+         WHERE u.idSub IS NOT NULL AND u.idSub != 0`
       );
 
       // Rebuild user table without idSub.
@@ -128,19 +161,22 @@ async function initDatabase() {
           idUser INTEGER PRIMARY KEY AUTOINCREMENT,
           isAdmin INTEGER NOT NULL DEFAULT 0,
           Name TEXT NOT NULL UNIQUE,
-          Password TEXT NOT NULL DEFAULT '${defaultPasswordHash}'
+          Password TEXT NOT NULL DEFAULT '${defaultPasswordHash}',
+          last_used INTEGER
         )`
       );
+      const oldUserCols = await all(db, `PRAGMA table_info(user_old)`);
+      const oldHasLastUsed = oldUserCols.some((c) => c && c.name === "last_used");
       await run(
         db,
-        `INSERT INTO user (idUser, isAdmin, Name, Password)
-         SELECT idUser, isAdmin, Name, Password FROM user_old`
+        oldHasLastUsed
+          ? `INSERT INTO user (idUser, isAdmin, Name, Password, last_used)
+             SELECT idUser, isAdmin, Name, Password, last_used FROM user_old`
+          : `INSERT INTO user (idUser, isAdmin, Name, Password, last_used)
+             SELECT idUser, isAdmin, Name, Password, NULL FROM user_old`
       );
       await run(db, `DROP TABLE user_old`);
-
-      await run(db, "COMMIT");
     } catch (err) {
-      await run(db, "ROLLBACK");
       throw err;
     }
   }
@@ -154,16 +190,25 @@ async function initDatabase() {
     [defaultPasswordHash]
   );
 
+  await run(
+    db,
+    `UPDATE user
+     SET last_used = strftime('%s','now')
+     WHERE last_used IS NULL`
+  );
+
   const hawk = await get(db, `SELECT idUser FROM user WHERE Name = ?`, ["Hawk"]);
   if (!hawk) {
     await run(
       db,
-      `INSERT INTO user (isAdmin, Name, Password) VALUES (?, ?, ?)`,
+      `INSERT INTO user (isAdmin, Name, Password, last_used) VALUES (?, ?, ?, strftime('%s','now'))`,
       [1, "Hawk", hashPassword(DEFAULT_PASSWORD)]
     );
   } else {
     await run(db, `UPDATE user SET isAdmin = 1 WHERE Name = ?`, ["Hawk"]);
   }
+
+  await run(db, "PRAGMA foreign_keys = ON");
 
   return db;
 }

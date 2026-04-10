@@ -35,6 +35,15 @@
           <p id="subject-message" class="login-message" aria-live="polite"></p>
         </form>
 
+        <form id="delete-subject-form" class="login-form admin-form">
+          <label for="delete-subject-select">Delete subject</label>
+          <div class="admin-inline">
+            <select id="delete-subject-select" name="idSub" required></select>
+            <button type="submit" class="button button-sm danger">Delete</button>
+          </div>
+          <p id="delete-subject-message" class="login-message" aria-live="polite"></p>
+        </form>
+
         <form id="add-user-form" class="login-form admin-form">
           <label for="new-user-name">Add user</label>
           <div class="admin-inline">
@@ -88,6 +97,29 @@
       </section>
     </main>
 
+    <div
+      class="overlay hidden"
+      id="orphan-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="orphan-title"
+    >
+      <div class="overlay-card">
+        <h2 id="orphan-title">Delete subject</h2>
+        <p id="orphan-body" class="subtitle" style="margin-top: 8px"></p>
+        <ul id="orphan-list" class="orphan-list"></ul>
+        <div class="overlay-actions">
+          <button type="button" class="button button-sm danger" id="orphan-delete-users">
+            Yes, delete these users
+          </button>
+          <button type="button" class="button button-sm primary" id="orphan-keep-users">
+            No, keep users (subject only)
+          </button>
+          <button type="button" class="button button-sm" id="orphan-cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+
     <script>
       const USER_STORE_KEY = "peerassUser";
       let currentUser = null;
@@ -102,21 +134,49 @@
 
       const userForm = document.getElementById("add-user-form");
       const subjectForm = document.getElementById("add-subject-form");
+      const deleteSubjectForm = document.getElementById("delete-subject-form");
       const copyForm = document.getElementById("copy-form");
       const message = document.getElementById("admin-message");
       const subjectMessage = document.getElementById("subject-message");
+      const deleteSubjectMessage = document.getElementById("delete-subject-message");
       const copyMessage = document.getElementById("copy-message");
       const nameInput = document.getElementById("new-user-name");
       const subjectSelect = document.getElementById("subject-select");
       const copySourceSelect = document.getElementById("copy-source-subject");
+      const deleteSubjectSelect = document.getElementById("delete-subject-select");
       const newSubjectInput = document.getElementById("new-subject-name");
       const copyNewSubjectInput = document.getElementById("copy-new-subject-name");
       const usersTbody = document.getElementById("users-tbody");
       const usersMessage = document.getElementById("users-message");
+      const orphanOverlay = document.getElementById("orphan-overlay");
+      const orphanBody = document.getElementById("orphan-body");
+      const orphanList = document.getElementById("orphan-list");
+      const orphanDeleteUsersBtn = document.getElementById("orphan-delete-users");
+      const orphanKeepUsersBtn = document.getElementById("orphan-keep-users");
+      const orphanCancelBtn = document.getElementById("orphan-cancel");
+
+      let pendingDeleteIdSub = null;
 
       function setMsg(el, text, isError = false) {
         el.textContent = text;
         el.classList.toggle("error", isError);
+      }
+
+      function toggleOrphanOverlay(show) {
+        orphanOverlay.classList.toggle("hidden", !show);
+        if (!show) pendingDeleteIdSub = null;
+      }
+
+      async function deleteSubjectRequest(idSub, deleteOrphans) {
+        return fetch("/api/admin/delete-subject", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            actorId: currentUser.idUser,
+            idSub,
+            deleteOrphans,
+          }),
+        });
       }
 
       async function loadSubjects() {
@@ -132,6 +192,9 @@
           ? options.join("")
           : `<option value="">No subject yet</option>`;
         copySourceSelect.innerHTML = options.length
+          ? options.join("")
+          : `<option value="">No subject yet</option>`;
+        deleteSubjectSelect.innerHTML = options.length
           ? options.join("")
           : `<option value="">No subject yet</option>`;
       }
@@ -194,6 +257,68 @@
           setMsg(subjectMessage, "Network error. Try again.", true);
         }
       });
+
+      deleteSubjectForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const idSub = Number(deleteSubjectSelect.value);
+        if (!Number.isFinite(idSub) || idSub <= 0) {
+          setMsg(deleteSubjectMessage, "Select a subject.", true);
+          return;
+        }
+        setMsg(deleteSubjectMessage, "Checking...");
+        try {
+          const response = await deleteSubjectRequest(idSub, undefined);
+          const data = await response.json();
+          if (!response.ok || !data.ok) {
+            setMsg(deleteSubjectMessage, data.message || "Could not delete subject.", true);
+            return;
+          }
+          if (data.needsOrphanDecision) {
+            pendingDeleteIdSub = idSub;
+            orphanBody.textContent = `Deleting "${data.subName}" would leave these users with no subject links. Delete these users too?`;
+            orphanList.innerHTML = (data.orphanUsers || [])
+              .map((u) => `<li>${esc(u.name)}</li>`)
+              .join("");
+            toggleOrphanOverlay(true);
+            setMsg(deleteSubjectMessage, "");
+            return;
+          }
+          setMsg(deleteSubjectMessage, data.message || "Subject deleted.");
+          deleteSubjectForm.reset();
+          await loadSubjects();
+          await loadUsers();
+        } catch (_err) {
+          setMsg(deleteSubjectMessage, "Network error. Try again.", true);
+        }
+      });
+
+      orphanCancelBtn.addEventListener("click", () => toggleOrphanOverlay(false));
+      orphanOverlay.addEventListener("click", (e) => {
+        if (e.target === orphanOverlay) toggleOrphanOverlay(false);
+      });
+
+      async function finishDelete(deleteOrphans) {
+        if (!pendingDeleteIdSub) return;
+        setMsg(deleteSubjectMessage, "Deleting...");
+        try {
+          const response = await deleteSubjectRequest(pendingDeleteIdSub, deleteOrphans);
+          const data = await response.json();
+          if (!response.ok || !data.ok) {
+            setMsg(deleteSubjectMessage, data.message || "Could not delete subject.", true);
+            return;
+          }
+          toggleOrphanOverlay(false);
+          setMsg(deleteSubjectMessage, data.message || "Subject deleted.");
+          deleteSubjectForm.reset();
+          await loadSubjects();
+          await loadUsers();
+        } catch (_err) {
+          setMsg(deleteSubjectMessage, "Network error. Try again.", true);
+        }
+      }
+
+      orphanDeleteUsersBtn.addEventListener("click", () => finishDelete(true));
+      orphanKeepUsersBtn.addEventListener("click", () => finishDelete(false));
 
       userForm.addEventListener("submit", async (e) => {
         e.preventDefault();

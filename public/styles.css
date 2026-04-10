@@ -140,6 +140,11 @@ body {
   background: linear-gradient(135deg, rgba(217, 90, 122, 0.24), rgba(243, 154, 112, 0.28));
 }
 
+.button.danger {
+  border-color: rgba(170, 33, 64, 0.45);
+  background: linear-gradient(135deg, rgba(170, 33, 64, 0.18), rgba(170, 33, 64, 0.08));
+}
+
 .button:focus-visible {
   outline: 3px solid rgba(217, 90, 122, 0.38);
   outline-offset: 2px;
@@ -233,6 +238,12 @@ body {
 .admin-inline input {
   min-width: 220px;
   flex: 1 1 220px;
+}
+
+.orphan-list {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: rgba(74, 36, 24, 0.88);
 }
 
 .admin-h2 {

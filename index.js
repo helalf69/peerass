@@ -21,6 +21,14 @@ async function requireAdminActor(actorId) {
   return { ok: true, actor };
 }
 
+async function safeRollback(db) {
+  try {
+    await run(db, "ROLLBACK");
+  } catch (_e) {
+    // ignore
+  }
+}
+
 // Health check for process managers / uptime monitors.
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "peerass" });
@@ -236,6 +244,84 @@ app.post("/api/admin/copy-subject-users", async (req, res) => {
       return res.status(409).json({ ok: false, message: "New subject name already exists." });
     }
     return res.status(500).json({ ok: false, message: "Could not copy names." });
+  }
+});
+
+app.post("/api/admin/delete-subject", async (req, res) => {
+  try {
+    const auth = await requireAdminActor(req.body.actorId);
+    if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
+
+    const idSub = Number(req.body.idSub);
+    if (!Number.isFinite(idSub) || idSub <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid subject." });
+    }
+
+    const subjectRow = await get(db, `SELECT idSub, subName FROM subject WHERE idSub = ? AND idUser = ?`, [
+      idSub,
+      auth.actor.idUser,
+    ]);
+    if (!subjectRow) {
+      return res.status(404).json({ ok: false, message: "Subject not found." });
+    }
+
+    const orphanUsers = await all(
+      db,
+      `SELECT DISTINCT u.idUser as idUser, u.Name as name
+       FROM user u
+       JOIN userSubject us ON us.idUser = u.idUser
+       WHERE us.idSub = ?
+         AND u.isAdmin = 0
+         AND NOT EXISTS (
+           SELECT 1 FROM userSubject us2
+           WHERE us2.idUser = u.idUser AND us2.idSub != ?
+         )`,
+      [idSub, idSub]
+    );
+
+    const deleteOrphans = req.body.deleteOrphans;
+    if (orphanUsers.length > 0 && deleteOrphans === undefined) {
+      return res.json({
+        ok: true,
+        needsOrphanDecision: true,
+        idSub,
+        subName: subjectRow.subName,
+        orphanUsers,
+      });
+    }
+
+    await run(db, "BEGIN IMMEDIATE");
+    try {
+      await run(db, `DELETE FROM subject WHERE idSub = ? AND idUser = ?`, [idSub, auth.actor.idUser]);
+
+      if (orphanUsers.length > 0 && deleteOrphans === true) {
+        const ids = orphanUsers.map((u) => u.idUser);
+        const placeholders = ids.map(() => "?").join(",");
+        await run(db, `DELETE FROM user WHERE isAdmin = 0 AND idUser IN (${placeholders})`, ids);
+      }
+
+      await run(db, "COMMIT");
+    } catch (err) {
+      await safeRollback(db);
+      throw err;
+    }
+
+    return res.json({
+      ok: true,
+      message:
+        orphanUsers.length > 0 && deleteOrphans === true
+          ? `Deleted subject ${subjectRow.subName} and ${orphanUsers.length} user(s) with no remaining subjects.`
+          : `Deleted subject ${subjectRow.subName}.`,
+      deletedOrphans: Boolean(deleteOrphans === true && orphanUsers.length > 0),
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("delete-subject failed:", err);
+    const msg = String(err && err.message ? err.message : err);
+    return res.status(500).json({
+      ok: false,
+      message: msg ? `Could not delete subject: ${msg}` : "Could not delete subject.",
+    });
   }
 });
 

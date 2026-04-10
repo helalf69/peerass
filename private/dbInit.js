@@ -67,6 +67,68 @@ async function tableExists(db, name) {
   return Boolean(row);
 }
 
+async function cleanupStaleUserOldSchemaObjects(db) {
+  // If a legacy migration crashed mid-flight, sqlite can retain triggers/views whose definitions still
+  // reference `user_old` even after the table is gone. That surfaces as confusing runtime errors like:
+  // "no such table: main.user_old".
+  const masters = ["sqlite_master", "sqlite_temp_master"];
+
+  const dropStatements = [];
+  const reasons = [];
+
+  for (const master of masters) {
+    // eslint-disable-next-line no-await-in-loop
+    const rows = await all(db, `SELECT type, name, tbl_name, sql FROM ${master}`);
+
+    for (const row of rows) {
+      const type = String(row.type || "");
+      const name = String(row.name || "");
+      const tbl = String(row.tbl_name || "");
+      const sql = String(row.sql || "");
+
+      const sqlHit = sql && sql.toLowerCase().includes("user_old");
+      const tblHit = tbl && tbl.toLowerCase() === "user_old";
+
+      if (!name) continue;
+      if (!sqlHit && !tblHit) continue;
+
+      const safeName = name.replace(/"/g, '""');
+      if (type === "trigger") {
+        dropStatements.push(`DROP TRIGGER IF EXISTS "${safeName}"`);
+        reasons.push(`${master}:${type}:${name}`);
+      } else if (type === "view") {
+        dropStatements.push(`DROP VIEW IF EXISTS "${safeName}"`);
+        reasons.push(`${master}:${type}:${name}`);
+      } else if (type === "index") {
+        // Rare, but possible if someone created an explicit index tied to a renamed/stale table name.
+        dropStatements.push(`DROP INDEX IF EXISTS "${safeName}"`);
+        reasons.push(`${master}:${type}:${name}`);
+      }
+    }
+  }
+
+  // Deterministic order: triggers first, then views (views are less likely, but keep stable).
+  dropStatements.sort((a, b) => {
+    const rank = (s) => (s.includes("DROP TRIGGER") ? 0 : s.includes("DROP VIEW") ? 1 : 2);
+    return rank(a) - rank(b) || a.localeCompare(b);
+  });
+
+  for (const stmt of dropStatements) {
+    // eslint-disable-next-line no-await-in-loop
+    await run(db, stmt);
+  }
+
+  if (reasons.length > 0) {
+    // eslint-disable-next-line no-console
+    console.log(`Cleaned stale schema objects referencing user_old: ${reasons.join(", ")}`);
+  }
+
+  if ((await tableExists(db, "user_old")) && (await tableExists(db, "user"))) {
+    // Extremely defensive: if both exist, prefer keeping `user` and dropping the leftover staging table.
+    await run(db, `DROP TABLE IF EXISTS user_old`);
+  }
+}
+
 async function initDatabase() {
   if (!fs.existsSync(privateDir)) fs.mkdirSync(privateDir, { recursive: true });
 
@@ -77,6 +139,8 @@ async function initDatabase() {
   // SQLite runs DDL outside of explicit transactions; keep FK enforcement off during init/migrations
   // and turn it on at the end once schema is stable.
   await run(db, "PRAGMA foreign_keys = OFF");
+
+  await cleanupStaleUserOldSchemaObjects(db);
 
   // Create user table if it doesn't exist (new schema: no idSub).
   await run(

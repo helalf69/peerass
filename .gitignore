@@ -6,4 +6,5 @@ node_modules/
 logs/
 
 private/*.sqlite3
+private/*.db
 

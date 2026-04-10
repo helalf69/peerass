@@ -208,35 +208,23 @@ app.post("/api/admin/copy-subject-users", async (req, res) => {
 
     const sourceUsers = await all(
       db,
-      `SELECT u.Name as Name
-       FROM user u
-       JOIN userSubject us ON us.idUser = u.idUser
-       WHERE us.idSub = ?
-       ORDER BY u.idUser ASC`,
+      `SELECT DISTINCT us.idUser as idUser
+       FROM userSubject us
+       WHERE us.idSub = ?`,
       [sourceIdSub]
     );
     for (const row of sourceUsers) {
-      const baseName = `${row.Name}_${newSubName}`;
-      let candidate = baseName;
-      let suffix = 1;
-      // keep username unique when copying
+      // Copy only membership links; do not create new users.
       // eslint-disable-next-line no-await-in-loop
-      while (await get(db, `SELECT idUser FROM user WHERE Name = ?`, [candidate])) {
-        suffix += 1;
-        candidate = `${baseName}_${suffix}`;
-      }
-      // eslint-disable-next-line no-await-in-loop
-      const ins = await run(
-        db,
-        `INSERT INTO user (Name, Password, last_used) VALUES (?, ?, strftime('%s','now'))`,
-        [candidate, hashPassword(DEFAULT_PASSWORD)]
-      );
-      await run(db, `INSERT INTO userSubject (idUser, idSub) VALUES (?, ?)`, [ins.lastID, newIdSub]);
+      await run(db, `INSERT OR IGNORE INTO userSubject (idUser, idSub) VALUES (?, ?)`, [
+        row.idUser,
+        newIdSub,
+      ]);
     }
 
     return res.json({
       ok: true,
-      message: `Created ${newSubName} and copied ${sourceUsers.length} user names.`,
+      message: `Created ${newSubName} and copied ${sourceUsers.length} user membership link(s).`,
       idSub: newIdSub,
     });
   } catch (err) {
@@ -332,19 +320,18 @@ app.get("/api/admin/users", async (req, res) => {
 
     const rows = await all(
       db,
-      `SELECT u.idUser, u.Name as name, u.Password as passwordHash, s.subName as subjectName
+      `SELECT DISTINCT u.idUser, u.Name as name, u.Password as passwordHash
        FROM user u
        JOIN userSubject us ON us.idUser = u.idUser
        JOIN subject s ON s.idSub = us.idSub
        WHERE s.idUser = ? AND u.isAdmin = 0
-       ORDER BY s.subName COLLATE NOCASE ASC, u.Name COLLATE NOCASE ASC`,
+       ORDER BY u.Name COLLATE NOCASE ASC`,
       [auth.actor.idUser]
     );
 
     const users = rows.map((r) => ({
       idUser: r.idUser,
       name: r.name,
-      subjectName: r.subjectName,
       passwordChanged: !verifyPassword(DEFAULT_PASSWORD, r.passwordHash),
     }));
 

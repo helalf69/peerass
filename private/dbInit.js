@@ -4,7 +4,7 @@ const path = require("path");
 const sqlite3 = require("sqlite3").verbose();
 
 const privateDir = __dirname;
-const dbPath = path.join(privateDir, "peerass.sqlite3");
+const dbPath = path.join(privateDir, "peerass.db");
 const DEFAULT_PASSWORD = "Java5cript";
 const DEFAULT_SALT = "peerass-default-salt";
 
@@ -62,110 +62,29 @@ function all(db, sql, params = []) {
   });
 }
 
-async function tableExists(db, name) {
-  const row = await get(db, `SELECT name FROM sqlite_master WHERE type='table' AND name = ?`, [name]);
-  return Boolean(row);
-}
-
-async function cleanupStaleUserOldSchemaObjects(db) {
-  // If a legacy migration crashed mid-flight, sqlite can retain triggers/views whose definitions still
-  // reference `user_old` even after the table is gone. That surfaces as confusing runtime errors like:
-  // "no such table: main.user_old".
-  const masters = ["sqlite_master", "sqlite_temp_master"];
-
-  const dropStatements = [];
-  const reasons = [];
-
-  for (const master of masters) {
-    // eslint-disable-next-line no-await-in-loop
-    const rows = await all(db, `SELECT type, name, tbl_name, sql FROM ${master}`);
-
-    for (const row of rows) {
-      const type = String(row.type || "");
-      const name = String(row.name || "");
-      const tbl = String(row.tbl_name || "");
-      const sql = String(row.sql || "");
-
-      const sqlHit = sql && sql.toLowerCase().includes("user_old");
-      const tblHit = tbl && tbl.toLowerCase() === "user_old";
-
-      if (!name) continue;
-      if (!sqlHit && !tblHit) continue;
-
-      const safeName = name.replace(/"/g, '""');
-      if (type === "trigger") {
-        dropStatements.push(`DROP TRIGGER IF EXISTS "${safeName}"`);
-        reasons.push(`${master}:${type}:${name}`);
-      } else if (type === "view") {
-        dropStatements.push(`DROP VIEW IF EXISTS "${safeName}"`);
-        reasons.push(`${master}:${type}:${name}`);
-      } else if (type === "index") {
-        // Rare, but possible if someone created an explicit index tied to a renamed/stale table name.
-        dropStatements.push(`DROP INDEX IF EXISTS "${safeName}"`);
-        reasons.push(`${master}:${type}:${name}`);
-      }
-    }
-  }
-
-  // Deterministic order: triggers first, then views (views are less likely, but keep stable).
-  dropStatements.sort((a, b) => {
-    const rank = (s) => (s.includes("DROP TRIGGER") ? 0 : s.includes("DROP VIEW") ? 1 : 2);
-    return rank(a) - rank(b) || a.localeCompare(b);
-  });
-
-  for (const stmt of dropStatements) {
-    // eslint-disable-next-line no-await-in-loop
-    await run(db, stmt);
-  }
-
-  if (reasons.length > 0) {
-    // eslint-disable-next-line no-console
-    console.log(`Cleaned stale schema objects referencing user_old: ${reasons.join(", ")}`);
-  }
-
-  if ((await tableExists(db, "user_old")) && (await tableExists(db, "user"))) {
-    // Extremely defensive: if both exist, prefer keeping `user` and dropping the leftover staging table.
-    await run(db, `DROP TABLE IF EXISTS user_old`);
-  }
-}
-
 async function initDatabase() {
   if (!fs.existsSync(privateDir)) fs.mkdirSync(privateDir, { recursive: true });
 
   const db = new sqlite3.Database(dbPath);
+  // eslint-disable-next-line no-console
+  console.log(`SQLite database path: ${dbPath}`);
 
   const defaultPasswordHash = hashWithSalt(DEFAULT_PASSWORD, DEFAULT_SALT);
 
-  // SQLite runs DDL outside of explicit transactions; keep FK enforcement off during init/migrations
-  // and turn it on at the end once schema is stable.
   await run(db, "PRAGMA foreign_keys = OFF");
 
-  await cleanupStaleUserOldSchemaObjects(db);
-
-  // Create user table if it doesn't exist (new schema: no idSub).
+  // Clean schema (new database file: peerass.db)
   await run(
     db,
     `CREATE TABLE IF NOT EXISTS user (
       idUser INTEGER PRIMARY KEY AUTOINCREMENT,
       isAdmin INTEGER NOT NULL DEFAULT 0,
       Name TEXT NOT NULL UNIQUE,
-      Password TEXT NOT NULL DEFAULT '${defaultPasswordHash}',
+      Password TEXT NOT NULL,
       last_used INTEGER
     )`
   );
 
-  try {
-    await run(db, `ALTER TABLE user ADD COLUMN last_used INTEGER`);
-  } catch (err) {
-    if (!String(err.message || "").includes("duplicate column name")) throw err;
-  }
-
-  // Recover from a partially-applied legacy migration (user renamed to user_old, but app crashed before swap).
-  if ((await tableExists(db, "user_old")) && !(await tableExists(db, "user"))) {
-    await run(db, `ALTER TABLE user_old RENAME TO user`);
-  }
-
-  // Create (or keep) subject table (depends on user).
   await run(
     db,
     `CREATE TABLE IF NOT EXISTS subject (
@@ -177,7 +96,6 @@ async function initDatabase() {
     )`
   );
 
-  // Join table connecting users <-> subjects.
   await run(
     db,
     `CREATE TABLE IF NOT EXISTS userSubject (
@@ -190,7 +108,7 @@ async function initDatabase() {
     )`
   );
 
-  // Placeholder for per-user activity rows; extend as the app grows.
+  // Used by the app today for login / password-change auditing (safe to keep even if you "start over" on core tables).
   await run(
     db,
     `CREATE TABLE IF NOT EXISTS user_activity (
@@ -202,50 +120,9 @@ async function initDatabase() {
     )`
   );
 
-  // If an older DB had user.idSub, migrate it into userSubject and rebuild user table without idSub.
-  const userCols = await all(db, `PRAGMA table_info(user)`);
-  const hasLegacyIdSub = userCols.some((c) => c && c.name === "idSub");
-  if (hasLegacyIdSub) {
-    try {
-      // Migrate legacy user.idSub to userSubject (ignore 0 / unset).
-      await run(
-        db,
-        `INSERT OR IGNORE INTO userSubject (idUser, idSub)
-         SELECT u.idUser, u.idSub
-         FROM user u
-         JOIN subject s ON s.idSub = u.idSub
-         WHERE u.idSub IS NOT NULL AND u.idSub != 0`
-      );
+  await run(db, "PRAGMA foreign_keys = ON");
 
-      // Rebuild user table without idSub.
-      await run(db, `ALTER TABLE user RENAME TO user_old`);
-      await run(
-        db,
-        `CREATE TABLE user (
-          idUser INTEGER PRIMARY KEY AUTOINCREMENT,
-          isAdmin INTEGER NOT NULL DEFAULT 0,
-          Name TEXT NOT NULL UNIQUE,
-          Password TEXT NOT NULL DEFAULT '${defaultPasswordHash}',
-          last_used INTEGER
-        )`
-      );
-      const oldUserCols = await all(db, `PRAGMA table_info(user_old)`);
-      const oldHasLastUsed = oldUserCols.some((c) => c && c.name === "last_used");
-      await run(
-        db,
-        oldHasLastUsed
-          ? `INSERT INTO user (idUser, isAdmin, Name, Password, last_used)
-             SELECT idUser, isAdmin, Name, Password, last_used FROM user_old`
-          : `INSERT INTO user (idUser, isAdmin, Name, Password, last_used)
-             SELECT idUser, isAdmin, Name, Password, NULL FROM user_old`
-      );
-      await run(db, `DROP TABLE user_old`);
-    } catch (err) {
-      throw err;
-    }
-  }
-
-  // Keep password default encrypted, even for existing rows with legacy plain value.
+  // Normalize legacy/plain default password storage (if any rows ever contain the literal default).
   await run(
     db,
     `UPDATE user
@@ -263,16 +140,13 @@ async function initDatabase() {
 
   const hawk = await get(db, `SELECT idUser FROM user WHERE Name = ?`, ["Hawk"]);
   if (!hawk) {
-    await run(
-      db,
-      `INSERT INTO user (isAdmin, Name, Password, last_used) VALUES (?, ?, ?, strftime('%s','now'))`,
-      [1, "Hawk", hashPassword(DEFAULT_PASSWORD)]
-    );
+    await run(db, `INSERT INTO user (isAdmin, Name, Password, last_used) VALUES (1, ?, ?, strftime('%s','now'))`, [
+      "Hawk",
+      hashPassword(DEFAULT_PASSWORD),
+    ]);
   } else {
     await run(db, `UPDATE user SET isAdmin = 1 WHERE Name = ?`, ["Hawk"]);
   }
-
-  await run(db, "PRAGMA foreign_keys = ON");
 
   return db;
 }
@@ -286,4 +160,3 @@ module.exports = {
   all,
   initDatabase,
 };
-

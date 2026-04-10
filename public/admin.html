@@ -85,7 +85,6 @@
               <thead>
                 <tr>
                   <th>Name</th>
-                  <th>Subject</th>
                   <th>Password changed</th>
                 </tr>
               </thead>
@@ -222,12 +221,11 @@
                 const cls = u.passwordChanged ? "ok" : "bad";
                 return `<tr>
                   <td>${esc(u.name)}</td>
-                  <td>${esc(u.subjectName)}</td>
                   <td class="${cls}" aria-label="${u.passwordChanged ? "changed" : "default"}">${mark}</td>
                 </tr>`;
               })
               .join("")
-          : `<tr><td colspan="3">No users yet.</td></tr>`;
+          : `<tr><td colspan="2">No users yet.</td></tr>`;
 
         setMsg(usersMessage, `${users.length} user(s).`);
       }

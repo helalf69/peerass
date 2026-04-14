@@ -36,10 +36,28 @@
     <main class="page">
       <section class="content">
         <h1 class="title">Peer assessment</h1>
+<!--        
         <p class="subtitle">
           A clean, peach-themed landing page with a contrasting
           <span class="accent">accent</span> palette.
         </p>
+-->
+        <section class="assessments-section" aria-labelledby="assessments-heading">
+          <h2 id="assessments-heading" class="assessments-heading">Assessments</h2>
+          <p id="assessments-hint" class="assessments-hint muted">
+            Log in to see assessments for your subjects.
+          </p>
+          <ul id="assessments-list" class="assessments-list"></ul>
+          <a
+            class="button button-with-favicon hidden assessments-add"
+            id="add-assessment-link"
+            href="/assessment-new.html"
+            title="Add assessment"
+          >
+            <img class="button-favicon" src="/include/favicon.png" alt="" width="18" height="18" />
+            <span>Add assessment</span>
+          </a>
+        </section>
       </section>
     </main>
 
@@ -103,6 +121,9 @@
       const authBtn = document.getElementById("auth-button");
       const whoami = document.getElementById("whoami");
       const adminLink = document.getElementById("admin-link");
+      const addAssessmentLink = document.getElementById("add-assessment-link");
+      const assessmentsList = document.getElementById("assessments-list");
+      const assessmentsHint = document.getElementById("assessments-hint");
 
       const pwOverlay = document.getElementById("pw-overlay");
       const pwForm = document.getElementById("pw-form");
@@ -131,6 +152,7 @@
         const authed = Boolean(currentUser);
         whoami.classList.toggle("hidden", !authed);
         adminLink.classList.toggle("hidden", !(authed && currentUser.isAdmin));
+        addAssessmentLink.classList.toggle("hidden", !(authed && currentUser.isAdmin));
 
         if (authed) {
           whoami.textContent = currentUser.name;
@@ -140,6 +162,77 @@
           whoami.textContent = "";
           authBtn.textContent = "🔓";
           authBtn.setAttribute("aria-controls", "login-overlay");
+        }
+        void loadAssessmentsList();
+      }
+
+      function esc(s) {
+        return String(s)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function formatTs(sec) {
+        if (sec == null) return "—";
+        const d = new Date(Number(sec) * 1000);
+        return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
+      }
+
+      function assessmentStatusLabel(a) {
+        const now = Math.floor(Date.now() / 1000);
+        if (a.isPlanned && !a.isOpen) return "Planned";
+        if (a.isOpen) {
+          if (a.startsAt != null && now < a.startsAt) return "Scheduled";
+          if (a.endsAt != null && now > a.endsAt) return "Ended";
+          return "Open";
+        }
+        if (a.endsAt != null && now > a.endsAt) return "Ended";
+        return "Closed";
+      }
+
+      async function loadAssessmentsList() {
+        assessmentsList.innerHTML = "";
+        if (!currentUser) {
+          assessmentsHint.textContent = "Log in to see assessments for your subjects.";
+          assessmentsHint.classList.remove("hidden");
+          return;
+        }
+        assessmentsHint.textContent = "Loading…";
+        try {
+          const response = await fetch(
+            `/api/assessments?userId=${encodeURIComponent(currentUser.idUser)}`
+          );
+          const data = await response.json();
+          if (!response.ok || !data.ok) {
+            assessmentsHint.textContent = "No available assessments.";
+            assessmentsHint.classList.remove("hidden");
+            return;
+          }
+          const items = data.assessments || [];
+          if (items.length === 0) {
+            assessmentsHint.textContent = "No available assessments.";
+            assessmentsHint.classList.remove("hidden");
+            assessmentsList.innerHTML = "";
+            return;
+          }
+          assessmentsHint.classList.add("hidden");
+          assessmentsHint.textContent = "";
+          assessmentsList.innerHTML = items
+            .map((a) => {
+              const status = esc(assessmentStatusLabel(a));
+              return `<li class="assessment-item">
+                <span class="assessment-title">${esc(a.title)}</span>
+                <span class="assessment-meta">${esc(a.subName)} · ${status}</span>
+                <span class="assessment-dates">Start: ${esc(formatTs(a.startsAt))} · End: ${esc(formatTs(a.endsAt))}</span>
+              </li>`;
+            })
+            .join("");
+        } catch (_err) {
+          assessmentsHint.textContent = "No available assessments.";
+          assessmentsHint.classList.remove("hidden");
         }
       }
 
@@ -247,6 +340,7 @@
           togglePwOverlay(false);
           // Don’t keep implying password is default after a successful change.
           setAuthedUI({ ...currentUser, mustChangePassword: false });
+          void loadAssessmentsList();
         } catch (_err) {
           pwMsg.textContent = "Network error. Try again.";
           pwMsg.classList.add("error");
@@ -260,6 +354,7 @@
       } catch (_err) {
         setAuthedUI(null);
       }
+      void loadAssessmentsList();
     </script>
   </body>
 </html>

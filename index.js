@@ -341,6 +341,54 @@ app.get("/api/admin/users", async (req, res) => {
   }
 });
 
+// Assessments visible to a user: any assessment in a subject they teach or are enrolled in.
+app.get("/api/assessments", async (req, res) => {
+  try {
+    const idUser = Number(req.query.userId);
+    if (!Number.isFinite(idUser) || idUser <= 0) {
+      return res.json({ ok: true, assessments: [] });
+    }
+
+    const rows = await all(
+      db,
+      `SELECT DISTINCT a.idAssessment,
+         a.idSubject,
+         a.title,
+         a.instructions,
+         a.isPlanned,
+         a.isOpen,
+         a.starts_at,
+         a.ends_at,
+         s.subName
+       FROM assessment a
+       JOIN subject s ON s.idSub = a.idSubject
+       WHERE a.idSubject IN (
+         SELECT idSub FROM userSubject WHERE idUser = ?
+         UNION
+         SELECT idSub FROM subject WHERE idUser = ?
+       )
+       ORDER BY (a.starts_at IS NULL), a.starts_at DESC, a.idAssessment DESC`,
+      [idUser, idUser]
+    );
+
+    const assessments = rows.map((r) => ({
+      idAssessment: r.idAssessment,
+      idSubject: r.idSubject,
+      subName: r.subName,
+      title: r.title,
+      instructions: r.instructions,
+      isPlanned: Boolean(r.isPlanned),
+      isOpen: Boolean(r.isOpen),
+      startsAt: r.starts_at,
+      endsAt: r.ends_at,
+    }));
+
+    return res.json({ ok: true, assessments });
+  } catch (_err) {
+    return res.status(500).json({ ok: false, message: "Could not load assessments." });
+  }
+});
+
 // Serve static assets (if any).
 app.use(express.static(path.join(__dirname, "public")));
 

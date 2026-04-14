@@ -108,6 +108,103 @@ async function initDatabase() {
     )`
   );
 
+  await run(
+    db,
+    `CREATE TABLE IF NOT EXISTS assessment (
+      idAssessment INTEGER PRIMARY KEY AUTOINCREMENT,
+      idSubject INTEGER NOT NULL,
+      idTeacher INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      instructions TEXT NOT NULL,
+      isPlanned INTEGER NOT NULL DEFAULT 1,
+      isOpen INTEGER NOT NULL DEFAULT 0,
+      starts_at INTEGER,
+      ends_at INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      FOREIGN KEY(idSubject) REFERENCES subject(idSub) ON DELETE CASCADE,
+      FOREIGN KEY(idTeacher) REFERENCES user(idUser)
+    )`
+  );
+
+  await run(
+    db,
+    `CREATE TABLE IF NOT EXISTS assessment_scale_level (
+      idScaleLevel INTEGER PRIMARY KEY AUTOINCREMENT,
+      idAssessment INTEGER NOT NULL,
+      scale_value INTEGER NOT NULL,
+      label TEXT NOT NULL,
+      description TEXT,
+      UNIQUE(idAssessment, scale_value),
+      FOREIGN KEY(idAssessment) REFERENCES assessment(idAssessment) ON DELETE CASCADE
+    )`
+  );
+
+  await run(
+    db,
+    `CREATE TABLE IF NOT EXISTS assessment_criterion (
+      idCriterion INTEGER PRIMARY KEY AUTOINCREMENT,
+      idAssessment INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY(idAssessment) REFERENCES assessment(idAssessment) ON DELETE CASCADE
+    )`
+  );
+
+  await run(
+    db,
+    `CREATE TABLE IF NOT EXISTS assessment_criterion_scale_guideline (
+      idGuideline INTEGER PRIMARY KEY AUTOINCREMENT,
+      idCriterion INTEGER NOT NULL,
+      scale_value INTEGER NOT NULL,
+      guideline_text TEXT NOT NULL,
+      UNIQUE(idCriterion, scale_value),
+      FOREIGN KEY(idCriterion) REFERENCES assessment_criterion(idCriterion) ON DELETE CASCADE
+    )`
+  );
+
+  await run(
+    db,
+    `CREATE TABLE IF NOT EXISTS assessment_target (
+      idTarget INTEGER PRIMARY KEY AUTOINCREMENT,
+      idAssessment INTEGER NOT NULL,
+      idStudent INTEGER NOT NULL,
+      UNIQUE(idAssessment, idStudent),
+      FOREIGN KEY(idAssessment) REFERENCES assessment(idAssessment) ON DELETE CASCADE,
+      FOREIGN KEY(idStudent) REFERENCES user(idUser) ON DELETE CASCADE
+    )`
+  );
+
+  await run(
+    db,
+    `CREATE TABLE IF NOT EXISTS assessment_submission (
+      idSubmission INTEGER PRIMARY KEY AUTOINCREMENT,
+      idAssessment INTEGER NOT NULL,
+      idAssessor INTEGER NOT NULL,
+      idTargetStudent INTEGER NOT NULL,
+      submitted_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      is_final INTEGER NOT NULL DEFAULT 1,
+      UNIQUE(idAssessment, idAssessor, idTargetStudent),
+      FOREIGN KEY(idAssessment) REFERENCES assessment(idAssessment) ON DELETE CASCADE,
+      FOREIGN KEY(idAssessor) REFERENCES user(idUser) ON DELETE CASCADE,
+      FOREIGN KEY(idTargetStudent) REFERENCES user(idUser) ON DELETE CASCADE
+    )`
+  );
+
+  await run(
+    db,
+    `CREATE TABLE IF NOT EXISTS assessment_submission_score (
+      idSubmissionScore INTEGER PRIMARY KEY AUTOINCREMENT,
+      idSubmission INTEGER NOT NULL,
+      idCriterion INTEGER NOT NULL,
+      scale_value INTEGER NOT NULL,
+      UNIQUE(idSubmission, idCriterion),
+      FOREIGN KEY(idSubmission) REFERENCES assessment_submission(idSubmission) ON DELETE CASCADE,
+      FOREIGN KEY(idCriterion) REFERENCES assessment_criterion(idCriterion) ON DELETE CASCADE
+    )`
+  );
+
   // Used by the app today for login / password-change auditing (safe to keep even if you "start over" on core tables).
   await run(
     db,

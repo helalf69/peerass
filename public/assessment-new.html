@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Peer assessment — New assessment</title>
+    <link rel="icon" href="/include/favicon.png" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <img class="logo-backdrop" src="/include/logo.png" alt="" aria-hidden="true" />
+    <nav class="top-actions" aria-label="Quick actions">
+      <a class="button button-sm" href="/" title="Home">&#x1F3E0;</a>
+    </nav>
+    <main class="page">
+      <section class="content assessment-wizard" aria-labelledby="wizard-title">
+        <h1 id="wizard-title" class="title">Create new assessment</h1>
+        <p class="subtitle">
+          Set up the assessment first, then define each assessment item with its own scale and point descriptions.
+        </p>
+
+        <p id="wizard-step-label" class="wizard-step-label">Step 1 of 1</p>
+
+        <form id="assessment-wizard-form" class="wizard-form">
+          <div id="wizard-fields"></div>
+          <p id="wizard-message" class="login-message" aria-live="polite"></p>
+          <div class="wizard-actions">
+            <button type="button" class="button" id="wizard-back">Back</button>
+            <button type="submit" class="button primary" id="wizard-next">Next</button>
+          </div>
+        </form>
+      </section>
+    </main>
+    <script>
+      const stepLabel = document.getElementById("wizard-step-label");
+      const wizardForm = document.getElementById("assessment-wizard-form");
+      const wizardFields = document.getElementById("wizard-fields");
+      const wizardMessage = document.getElementById("wizard-message");
+      const backBtn = document.getElementById("wizard-back");
+      const nextBtn = document.getElementById("wizard-next");
+
+      const scaleTemplates = {
+        "0-3": { min: 0, max: 3 },
+        "1-3": { min: 1, max: 3 },
+        "1-6": { min: 1, max: 6 },
+        "1-10": { min: 1, max: 10 },
+      };
+
+      const state = {
+        step: 0,
+        title: "",
+        description: "",
+        itemCount: 1,
+        items: [],
+      };
+
+      function esc(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function pointValues(min, max) {
+        const start = Number(min);
+        const end = Number(max);
+        if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return [];
+        return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+      }
+
+      function ensureScalePoints(item) {
+        const values = pointValues(item.scaleMin, item.scaleMax);
+        item.points = values.map((value, index) => {
+          const existing = (item.points || []).find((p) => p.value === value);
+          return existing || { value, description: index === 0 ? "Needs improvement" : "" };
+        });
+      }
+
+      function initItems(count) {
+        state.items = Array.from({ length: count }, (_, index) => ({
+          name: `Assessment item ${index + 1}`,
+          description: "",
+          scaleType: "1-3",
+          scaleMin: 1,
+          scaleMax: 3,
+          points: [
+            { value: 1, description: "Needs improvement" },
+            { value: 2, description: "" },
+            { value: 3, description: "Excellent" },
+          ],
+        }));
+      }
+
+      function renderStep() {
+        const totalSteps = 1 + state.itemCount;
+        stepLabel.textContent = `Step ${state.step + 1} of ${totalSteps}`;
+        wizardMessage.textContent = "";
+        wizardMessage.classList.remove("error");
+
+        if (state.step === 0) {
+          backBtn.classList.add("hidden");
+          nextBtn.textContent = state.itemCount > 0 ? "Next" : "Create item pages";
+          renderSetupStep();
+          return;
+        }
+
+        backBtn.classList.remove("hidden");
+        nextBtn.textContent = state.step === totalSteps - 1 ? "Finish" : "Next";
+        renderItemStep(state.step - 1);
+      }
+
+      function renderSetupStep() {
+        wizardFields.innerHTML = `
+          <label>
+            Title
+            <input name="title" required maxlength="120" value="${esc(state.title)}" />
+          </label>
+          <label>
+            Description
+            <textarea name="description" rows="4" maxlength="2000">${esc(state.description)}</textarea>
+          </label>
+          <label>
+            How many assessment items?
+            <input name="itemCount" type="number" min="1" max="30" required value="${state.itemCount}" />
+          </label>
+        `;
+      }
+
+      function renderItemStep(index) {
+        const item = state.items[index];
+        const values = pointValues(item.scaleMin, item.scaleMax);
+        const pointFields = values
+          .map((value) => {
+            const point = item.points.find((p) => p.value === value) || { value, description: "" };
+            return `
+              <label class="wizard-point-field">
+                <span>Point ${value} description</span>
+                <input
+                  name="point-${value}"
+                  maxlength="500"
+                  value="${esc(point.description)}"
+                  placeholder="What does score ${value} mean?"
+                />
+              </label>
+            `;
+          })
+          .join("");
+
+        wizardFields.innerHTML = `
+          <h2 class="admin-h2">Assessment item ${index + 1}</h2>
+          <label>
+            Item title
+            <input name="itemName" required maxlength="120" value="${esc(item.name)}" />
+          </label>
+          <label>
+            General description
+            <textarea name="itemDescription" rows="3" maxlength="1500">${esc(item.description)}</textarea>
+          </label>
+          <label>
+            Scale
+            <select name="scaleType" id="scale-type-select">
+              <option value="0-3" ${item.scaleType === "0-3" ? "selected" : ""}>0 to 3</option>
+              <option value="1-3" ${item.scaleType === "1-3" ? "selected" : ""}>1 to 3</option>
+              <option value="1-6" ${item.scaleType === "1-6" ? "selected" : ""}>1 to 6</option>
+              <option value="1-10" ${item.scaleType === "1-10" ? "selected" : ""}>1 to 10</option>
+            </select>
+          </label>
+          <div class="wizard-points">
+            <h3 class="wizard-points-title">Description for each scale point</h3>
+            ${pointFields}
+          </div>
+        `;
+
+        const scaleSelect = document.getElementById("scale-type-select");
+        scaleSelect.addEventListener("change", (event) => {
+          const nextType = event.target.value;
+          item.scaleType = nextType;
+          const template = scaleTemplates[nextType] || scaleTemplates["1-3"];
+          item.scaleMin = template.min;
+          item.scaleMax = template.max;
+          ensureScalePoints(item);
+          renderItemStep(index);
+        });
+      }
+
+      function saveSetupStep() {
+        const formData = new FormData(wizardForm);
+        const title = String(formData.get("title") || "").trim();
+        const description = String(formData.get("description") || "").trim();
+        const itemCount = Number(formData.get("itemCount"));
+
+        if (!title) return "Title is required.";
+        if (!Number.isInteger(itemCount) || itemCount < 1 || itemCount > 30) {
+          return "Assessment item count must be between 1 and 30.";
+        }
+
+        const prevCount = state.itemCount;
+        state.title = title;
+        state.description = description;
+        state.itemCount = itemCount;
+
+        if (state.items.length === 0) {
+          initItems(itemCount);
+        } else if (itemCount !== prevCount) {
+          if (itemCount > state.items.length) {
+            const extra = itemCount - state.items.length;
+            const start = state.items.length;
+            for (let i = 0; i < extra; i += 1) {
+              state.items.push({
+                name: `Assessment item ${start + i + 1}`,
+                description: "",
+                scaleType: "1-3",
+                scaleMin: 1,
+                scaleMax: 3,
+                points: [
+                  { value: 1, description: "Needs improvement" },
+                  { value: 2, description: "" },
+                  { value: 3, description: "Excellent" },
+                ],
+              });
+            }
+          } else {
+            state.items = state.items.slice(0, itemCount);
+          }
+        }
+
+        return "";
+      }
+
+      function saveItemStep(index) {
+        const item = state.items[index];
+        const formData = new FormData(wizardForm);
+        const itemName = String(formData.get("itemName") || "").trim();
+        const itemDescription = String(formData.get("itemDescription") || "").trim();
+        const scaleType = String(formData.get("scaleType") || "1-3");
+
+        if (!itemName) return "Assessment item title is required.";
+
+        item.name = itemName;
+        item.description = itemDescription;
+        item.scaleType = scaleType;
+
+        const template = scaleTemplates[scaleType] || scaleTemplates["1-3"];
+        item.scaleMin = template.min;
+        item.scaleMax = template.max;
+
+        ensureScalePoints(item);
+        const points = pointValues(item.scaleMin, item.scaleMax);
+        let previousDescription = "";
+        item.points = points.map((value) => {
+          const typedDescription = String(formData.get(`point-${value}`) || "").trim();
+          const description = typedDescription || previousDescription;
+          previousDescription = description;
+          return { value, description };
+        });
+
+        return "";
+      }
+
+      function showError(message) {
+        wizardMessage.textContent = message;
+        wizardMessage.classList.add("error");
+      }
+
+      wizardForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const totalSteps = 1 + state.itemCount;
+
+        const message = state.step === 0 ? saveSetupStep() : saveItemStep(state.step - 1);
+        if (message) {
+          showError(message);
+          return;
+        }
+
+        if (state.step < totalSteps - 1) {
+          state.step += 1;
+          renderStep();
+          return;
+        }
+
+        wizardMessage.textContent = "Setup complete. Save endpoint can be connected next.";
+        wizardMessage.classList.remove("error");
+      });
+
+      backBtn.addEventListener("click", () => {
+        if (state.step === 0) return;
+        if (state.step > 0) state.step -= 1;
+        renderStep();
+      });
+
+      initItems(state.itemCount);
+      renderStep();
+    </script>
+  </body>
+</html>

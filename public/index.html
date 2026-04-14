@@ -153,6 +153,14 @@
         whoami.classList.toggle("hidden", !authed);
         adminLink.classList.toggle("hidden", !(authed && currentUser.isAdmin));
         addAssessmentLink.classList.toggle("hidden", !(authed && currentUser.isAdmin));
+        if (authed && currentUser.isAdmin) {
+          addAssessmentLink.setAttribute(
+            "href",
+            `/assessment-new.html?actorId=${encodeURIComponent(currentUser.idUser)}`
+          );
+        } else {
+          addAssessmentLink.setAttribute("href", "/assessment-new.html");
+        }
 
         if (authed) {
           whoami.textContent = currentUser.name;

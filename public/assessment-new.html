@@ -48,6 +48,10 @@
 
       const state = {
         step: 0,
+        actorId: null,
+        subjects: [],
+        idSub: "",
+        assessmentDate: "",
         title: "",
         description: "",
         itemCount: 1,
@@ -61,6 +65,13 @@
           .replaceAll(">", "&gt;")
           .replaceAll('"', "&quot;")
           .replaceAll("'", "&#39;");
+      }
+
+      function formatDateInput(date) {
+        const y = date.getFullYear();
+        const m = String(date.getMonth() + 1).padStart(2, "0");
+        const d = String(date.getDate()).padStart(2, "0");
+        return `${y}-${m}-${d}`;
       }
 
       function pointValues(min, max) {
@@ -85,6 +96,7 @@
           scaleType: "1-3",
           scaleMin: 1,
           scaleMax: 3,
+          touched: false,
           points: [
             { value: 1, description: "Needs improvement" },
             { value: 2, description: "" },
@@ -113,6 +125,22 @@
 
       function renderSetupStep() {
         wizardFields.innerHTML = `
+          <label>
+            Subject
+            <select name="idSub" required>
+              <option value="">Choose subject</option>
+              ${state.subjects
+                .map(
+                  (s) =>
+                    `<option value="${s.idSub}" ${String(state.idSub) === String(s.idSub) ? "selected" : ""}>${esc(s.subName)}</option>`
+                )
+                .join("")}
+            </select>
+          </label>
+          <label>
+            Assessment date
+            <input name="assessmentDate" type="date" required value="${esc(state.assessmentDate)}" />
+          </label>
           <label>
             Title
             <input name="title" required maxlength="120" value="${esc(state.title)}" />
@@ -187,16 +215,22 @@
 
       function saveSetupStep() {
         const formData = new FormData(wizardForm);
+        const idSub = Number(formData.get("idSub"));
+        const assessmentDate = String(formData.get("assessmentDate") || "").trim();
         const title = String(formData.get("title") || "").trim();
         const description = String(formData.get("description") || "").trim();
         const itemCount = Number(formData.get("itemCount"));
 
+        if (!Number.isFinite(idSub) || idSub <= 0) return "Subject is required.";
+        if (!assessmentDate) return "Assessment date is required.";
         if (!title) return "Title is required.";
         if (!Number.isInteger(itemCount) || itemCount < 1 || itemCount > 30) {
           return "Assessment item count must be between 1 and 30.";
         }
 
         const prevCount = state.itemCount;
+        state.idSub = idSub;
+        state.assessmentDate = assessmentDate;
         state.title = title;
         state.description = description;
         state.itemCount = itemCount;
@@ -214,6 +248,7 @@
                 scaleType: "1-3",
                 scaleMin: 1,
                 scaleMax: 3,
+                touched: false,
                 points: [
                   { value: 1, description: "Needs improvement" },
                   { value: 2, description: "" },
@@ -255,8 +290,23 @@
           previousDescription = description;
           return { value, description };
         });
+        item.touched = true;
 
         return "";
+      }
+
+      function copyScaleToNextItem(index) {
+        const current = state.items[index];
+        const next = state.items[index + 1];
+        if (!current || !next || next.touched) return;
+
+        next.scaleType = current.scaleType;
+        next.scaleMin = current.scaleMin;
+        next.scaleMax = current.scaleMax;
+        next.points = (current.points || []).map((point) => ({
+          value: point.value,
+          description: point.description,
+        }));
       }
 
       function showError(message) {
@@ -264,7 +314,68 @@
         wizardMessage.classList.add("error");
       }
 
-      wizardForm.addEventListener("submit", (event) => {
+      async function loadSetupContext() {
+        let user = null;
+        try {
+          const raw = localStorage.getItem("peerassUser");
+          user = raw ? JSON.parse(raw) : null;
+        } catch (_err) {
+          user = null;
+        }
+
+        if (!user || !user.idUser || !user.isAdmin) {
+          showError("Admin login required.");
+          nextBtn.disabled = true;
+          return;
+        }
+        state.actorId = user.idUser;
+
+        try {
+          const response = await fetch(`/api/admin/subjects?actorId=${encodeURIComponent(state.actorId)}`);
+          const data = await response.json();
+          if (!response.ok || !data.ok) {
+            showError(data.message || "Could not load subjects.");
+            nextBtn.disabled = true;
+            return;
+          }
+          state.subjects = Array.isArray(data.subjects) ? data.subjects : [];
+          if (state.subjects.length === 0) {
+            showError("No subjects available.");
+            nextBtn.disabled = true;
+            return;
+          }
+          state.idSub = state.idSub || state.subjects[0].idSub;
+          renderStep();
+        } catch (_err) {
+          showError("Could not load subjects.");
+          nextBtn.disabled = true;
+        }
+      }
+
+      function buildDraftPayload() {
+        return {
+          actorId: state.actorId,
+          idSub: Number(state.idSub),
+          assessmentDate: state.assessmentDate,
+          title: state.title,
+          description: state.description,
+          itemCount: state.itemCount,
+          items: state.items.map((item, index) => ({
+            sortOrder: index,
+            name: item.name,
+            description: item.description,
+            scaleType: item.scaleType,
+            scaleMin: item.scaleMin,
+            scaleMax: item.scaleMax,
+            points: (item.points || []).map((point) => ({
+              value: point.value,
+              description: point.description,
+            })),
+          })),
+        };
+      }
+
+      wizardForm.addEventListener("submit", async (event) => {
         event.preventDefault();
         const totalSteps = 1 + state.itemCount;
 
@@ -275,13 +386,34 @@
         }
 
         if (state.step < totalSteps - 1) {
+          if (state.step > 0) {
+            copyScaleToNextItem(state.step - 1);
+          }
           state.step += 1;
           renderStep();
           return;
         }
 
-        wizardMessage.textContent = "Setup complete. Save endpoint can be connected next.";
-        wizardMessage.classList.remove("error");
+        const payload = buildDraftPayload();
+        try {
+          const response = await fetch("/api/assessment-draft/echo", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const data = await response.json();
+          if (!response.ok || !data.ok) {
+            showError(data.message || "Could not save assessment.");
+            return;
+          }
+
+          console.log("Assessment draft sent:", payload);
+          console.log("Assessment save response:", data);
+          wizardMessage.textContent = `Assessment saved (id ${data.idAssessment}). Check browser console for JSON.`;
+          wizardMessage.classList.remove("error");
+        } catch (_err) {
+          showError("Could not save assessment.");
+        }
       });
 
       backBtn.addEventListener("click", () => {
@@ -291,7 +423,11 @@
       });
 
       initItems(state.itemCount);
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      state.assessmentDate = formatDateInput(tomorrow);
       renderStep();
+      void loadSetupContext();
     </script>
   </body>
 </html>

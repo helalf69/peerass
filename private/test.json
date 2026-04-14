@@ -1,0 +1,80 @@
+{
+  "savedAt": 1776161646,
+  "idAssessment": 1,
+  "payload": {
+    "actorId": 1,
+    "idSub": 4,
+    "assessmentDate": "2026-04-15",
+    "title": "EOW uke 16",
+    "description": "Målet er at du skal bli mer «profesjonell». Vårt fagområde er i stadig raskere utvikling, og vi må lære oss å følge med. Vi har forskjellige interesseområder (også innen IT), så jeg har laget disse hoved-overskriftene. Hver uke får du en artikkel e.l. hvor du skal fordype deg innen et av disse områdene (det blir ikke alle områdene hver uke, men over tid). Så, du skal lære opp (eller «opplyse», som jeg liker å si) dine medelever.",
+    "itemCount": 3,
+    "items": [
+      {
+        "sortOrder": 0,
+        "name": "Formidling",
+        "description": "a.\tGod bruk av presentasjonsverktøy\nb.\tGod formidling – tydelig, tilpasset publikum",
+        "scaleType": "1-3",
+        "scaleMin": 1,
+        "scaleMax": 3,
+        "points": [
+          {
+            "value": 1,
+            "description": "Kan/bør bli bedre"
+          },
+          {
+            "value": 2,
+            "description": "Bra"
+          },
+          {
+            "value": 3,
+            "description": "Perfekt"
+          }
+        ]
+      },
+      {
+        "sortOrder": 1,
+        "name": "Faglighet",
+        "description": "a.\tForklarer vanskelige begreper\nb.\tFlere perspektiv/synspunkt",
+        "scaleType": "1-3",
+        "scaleMin": 1,
+        "scaleMax": 3,
+        "points": [
+          {
+            "value": 1,
+            "description": "Kan/bør bli bedre"
+          },
+          {
+            "value": 2,
+            "description": "Bra"
+          },
+          {
+            "value": 3,
+            "description": "Perfekt"
+          }
+        ]
+      },
+      {
+        "sortOrder": 2,
+        "name": "Tverrfaglig",
+        "description": "a.\tDekker fagets kjerneelementer \nb.\tDekker fagets tverrfaglige temaer \nc.\tKobles til din hverdag (skole, privat, jobb)",
+        "scaleType": "1-3",
+        "scaleMin": 1,
+        "scaleMax": 3,
+        "points": [
+          {
+            "value": 1,
+            "description": "Kan/bør bli bedre"
+          },
+          {
+            "value": 2,
+            "description": "Bra"
+          },
+          {
+            "value": 3,
+            "description": "Perfekt"
+          }
+        ]
+      }
+    ]
+  }
+}

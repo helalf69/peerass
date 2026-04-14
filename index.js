@@ -1,4 +1,5 @@
 const path = require("path");
+const fs = require("fs/promises");
 const express = require("express");
 require("dotenv").config();
 const { get, all, initDatabase, verifyPassword, run, hashPassword } = require("./private/dbInit");
@@ -386,6 +387,116 @@ app.get("/api/assessments", async (req, res) => {
     return res.json({ ok: true, assessments });
   } catch (_err) {
     return res.status(500).json({ ok: false, message: "Could not load assessments." });
+  }
+});
+
+// Save assessment draft and echo payload for testing.
+app.post("/api/assessment-draft/echo", async (req, res) => {
+  try {
+    const actorId = Number(req.body.actorId);
+    const idSub = Number(req.body.idSub);
+    const assessmentDate = String(req.body.assessmentDate || "").trim();
+    const title = String(req.body.title || "").trim();
+    const description = String(req.body.description || "").trim();
+    const items = Array.isArray(req.body.items) ? req.body.items : [];
+
+    const auth = await requireAdminActor(actorId);
+    if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
+
+    if (!Number.isFinite(idSub) || idSub <= 0) {
+      return res.status(400).json({ ok: false, message: "Subject is required." });
+    }
+    const subject = await get(db, `SELECT idSub FROM subject WHERE idSub = ? AND idUser = ?`, [idSub, auth.actor.idUser]);
+    if (!subject) {
+      return res.status(403).json({ ok: false, message: "Subject not available for this admin." });
+    }
+    if (!title) {
+      return res.status(400).json({ ok: false, message: "Title is required." });
+    }
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(assessmentDate);
+    if (!m) {
+      return res.status(400).json({ ok: false, message: "Assessment date must be YYYY-MM-DD." });
+    }
+    const startsAt = Math.floor(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 1000);
+    if (items.length === 0) {
+      return res.status(400).json({ ok: false, message: "At least one assessment item is required." });
+    }
+
+    await run(db, "BEGIN IMMEDIATE");
+    let idAssessment;
+    try {
+      const assessmentInsert = await run(
+        db,
+        `INSERT INTO assessment (idSubject, idTeacher, title, instructions, isPlanned, isOpen, starts_at)
+         VALUES (?, ?, ?, ?, 1, 0, ?)`,
+        [idSub, auth.actor.idUser, title, description, startsAt]
+      );
+      idAssessment = assessmentInsert.lastID;
+
+      for (let i = 0; i < items.length; i += 1) {
+        const item = items[i] || {};
+        const name = String(item.name || "").trim();
+        const itemDescription = String(item.description || "").trim();
+        const points = Array.isArray(item.points) ? item.points : [];
+        if (!name) throw new Error(`Assessment item ${i + 1} is missing a name.`);
+
+        // eslint-disable-next-line no-await-in-loop
+        const criterionInsert = await run(
+          db,
+          `INSERT INTO assessment_criterion (idAssessment, name, description, sort_order)
+           VALUES (?, ?, ?, ?)`,
+          [idAssessment, name, itemDescription, i]
+        );
+        const idCriterion = criterionInsert.lastID;
+
+        for (const point of points) {
+          const scaleValue = Number(point.value);
+          const guidelineText = String(point.description || "").trim();
+          if (!Number.isInteger(scaleValue)) continue;
+          // eslint-disable-next-line no-await-in-loop
+          await run(
+            db,
+            `INSERT INTO assessment_criterion_scale_guideline (idCriterion, scale_value, guideline_text)
+             VALUES (?, ?, ?)`,
+            [idCriterion, scaleValue, guidelineText]
+          );
+        }
+      }
+
+      await run(db, "COMMIT");
+    } catch (err) {
+      await safeRollback(db);
+      throw err;
+    }
+
+    const outPath = path.join(__dirname, "private", "test.json");
+    const payloadToWrite = {
+      savedAt: Math.floor(Date.now() / 1000),
+      idAssessment,
+      payload: req.body || {},
+    };
+    await fs.writeFile(outPath, `${JSON.stringify(payloadToWrite, null, 2)}\n`, "utf8");
+
+    return res.json({
+      ok: true,
+      message: "Assessment saved.",
+      idAssessment,
+      data: req.body || {},
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: `Could not save assessment: ${String(err.message || err)}` });
+  }
+});
+
+app.get("/assessment-new.html", async (req, res) => {
+  try {
+    const auth = await requireAdminActor(req.query.actorId);
+    if (!auth.ok) {
+      return res.status(auth.status).send("Admin access required.");
+    }
+    return res.sendFile(path.join(__dirname, "public", "assessment-new.html"));
+  } catch (_err) {
+    return res.status(500).send("Could not open page.");
   }
 });
 

@@ -161,8 +161,8 @@
               `/api/assessment-draft/${encodeURIComponent(idAssessment)}?actorId=${encodeURIComponent(actorId)}`
             ),
           ]);
-          const subjectsData = await subjectsResp.json();
-          const assessmentData = await assessmentResp.json();
+          const subjectsData = await readMaybeJson(subjectsResp);
+          const assessmentData = await readMaybeJson(assessmentResp);
           if (!subjectsResp.ok || !subjectsData.ok) throw new Error(subjectsData.message || "Could not load subjects.");
           if (!assessmentResp.ok || !assessmentData.ok)
             throw new Error(assessmentData.message || "Could not load assessment.");
@@ -215,6 +215,13 @@
         };
       }
 
+      async function readMaybeJson(response) {
+        const contentType = String(response.headers.get("content-type") || "");
+        if (contentType.includes("application/json")) return response.json();
+        const text = await response.text();
+        throw new Error(`Unexpected response (${response.status}): ${text.slice(0, 140)}`);
+      }
+
       form.addEventListener("submit", async (e) => {
         e.preventDefault();
         msg.textContent = "Saving...";
@@ -226,7 +233,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
           });
-          const data = await response.json();
+          const data = await readMaybeJson(response);
           if (!response.ok || !data.ok) throw new Error(data.message || "Could not save.");
           console.log("Assessment update payload:", payload);
           console.log("Assessment update response:", data);

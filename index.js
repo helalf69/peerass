@@ -30,6 +30,10 @@ registerRoutes(app, {
   privateDir,
 });
 
+app.use("/api", (_req, res) => {
+  res.status(404).json({ ok: false, message: "API route not found." });
+});
+
 app.use(express.static(publicDir));
 
 app.get(/.*/, (_req, res) => {

@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Peer assessment — Edit assessment</title>
+    <link rel="icon" href="/include/favicon.png" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <img class="logo-backdrop" src="/include/logo.png" alt="" aria-hidden="true" />
+    <nav class="top-actions" aria-label="Quick actions">
+      <a class="button button-sm" href="/" title="Home">&#x1F3E0;</a>
+    </nav>
+    <main class="page">
+      <section class="content assessment-wizard" aria-labelledby="edit-title">
+        <h1 id="edit-title" class="title">Edit assessment</h1>
+        <p class="subtitle">Update details, date, and point descriptions for this assessment.</p>
+        <form id="edit-form" class="wizard-form">
+          <div id="edit-fields"></div>
+          <p id="edit-message" class="login-message" aria-live="polite"></p>
+          <div class="wizard-actions">
+            <button type="submit" class="button primary">Save changes</button>
+          </div>
+        </form>
+      </section>
+    </main>
+    <script>
+      const form = document.getElementById("edit-form");
+      const fields = document.getElementById("edit-fields");
+      const msg = document.getElementById("edit-message");
+
+      const params = new URLSearchParams(window.location.search);
+      const actorId = Number(params.get("actorId"));
+      const idAssessment = Number(params.get("idAssessment"));
+
+      const scaleTemplates = {
+        "0-3": { min: 0, max: 3 },
+        "1-3": { min: 1, max: 3 },
+        "1-6": { min: 1, max: 6 },
+        "1-10": { min: 1, max: 10 },
+      };
+
+      const state = {
+        subjects: [],
+        idSub: "",
+        assessmentDate: "",
+        title: "",
+        description: "",
+        items: [],
+      };
+
+      function esc(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function pointValues(min, max) {
+        const out = [];
+        for (let v = Number(min); v <= Number(max); v += 1) out.push(v);
+        return out;
+      }
+
+      function inferScaleType(points) {
+        const values = points.map((p) => Number(p.value)).sort((a, b) => a - b);
+        if (values.length === 4 && values[0] === 0 && values[3] === 3) return "0-3";
+        if (values.length === 3 && values[0] === 1 && values[2] === 3) return "1-3";
+        if (values.length === 6 && values[0] === 1 && values[5] === 6) return "1-6";
+        if (values.length === 10 && values[0] === 1 && values[9] === 10) return "1-10";
+        return "1-3";
+      }
+
+      function normalizeItem(item) {
+        const points = Array.isArray(item.points) ? item.points : [];
+        const scaleType = inferScaleType(points);
+        const tpl = scaleTemplates[scaleType];
+        const byVal = new Map(points.map((p) => [Number(p.value), String(p.description || "")]));
+        return {
+          name: String(item.name || ""),
+          description: String(item.description || ""),
+          scaleType,
+          scaleMin: tpl.min,
+          scaleMax: tpl.max,
+          points: pointValues(tpl.min, tpl.max).map((v) => ({ value: v, description: byVal.get(v) || "" })),
+        };
+      }
+
+      function render() {
+        const subjectOptions = state.subjects
+          .map(
+            (s) =>
+              `<option value="${s.idSub}" ${String(state.idSub) === String(s.idSub) ? "selected" : ""}>${esc(s.subName)}</option>`
+          )
+          .join("");
+
+        const itemsHtml = state.items
+          .map((item, idx) => {
+            const pointInputs = item.points
+              .map(
+                (p) => `<label class="wizard-point-field">
+                  <span>Point ${p.value} description</span>
+                  <input name="item-${idx}-point-${p.value}" value="${esc(p.description)}" maxlength="500" />
+                </label>`
+              )
+              .join("");
+            return `<div class="wizard-points">
+              <h3 class="wizard-points-title">Assessment item ${idx + 1}</h3>
+              <label>Item title<input name="item-${idx}-name" value="${esc(item.name)}" required maxlength="120" /></label>
+              <label>General description<textarea name="item-${idx}-description" rows="3" maxlength="1500">${esc(item.description)}</textarea></label>
+              <label>
+                Scale
+                <select name="item-${idx}-scale">
+                  <option value="0-3" ${item.scaleType === "0-3" ? "selected" : ""}>0 to 3</option>
+                  <option value="1-3" ${item.scaleType === "1-3" ? "selected" : ""}>1 to 3</option>
+                  <option value="1-6" ${item.scaleType === "1-6" ? "selected" : ""}>1 to 6</option>
+                  <option value="1-10" ${item.scaleType === "1-10" ? "selected" : ""}>1 to 10</option>
+                </select>
+              </label>
+              ${pointInputs}
+            </div>`;
+          })
+          .join("");
+
+        fields.innerHTML = `
+          <label>Subject<select name="idSub" required>${subjectOptions}</select></label>
+          <label>Assessment date<input name="assessmentDate" type="date" required value="${esc(state.assessmentDate)}" /></label>
+          <label>Title<input name="title" required maxlength="120" value="${esc(state.title)}" /></label>
+          <label>Description<textarea name="description" rows="4" maxlength="2000">${esc(state.description)}</textarea></label>
+          <div class="assessment-edit-items">${itemsHtml}</div>
+        `;
+
+        state.items.forEach((item, idx) => {
+          const select = form.querySelector(`select[name="item-${idx}-scale"]`);
+          select.addEventListener("change", (e) => {
+            const nextType = String(e.target.value || "1-3");
+            const tpl = scaleTemplates[nextType] || scaleTemplates["1-3"];
+            const old = new Map(item.points.map((p) => [p.value, p.description]));
+            item.scaleType = nextType;
+            item.scaleMin = tpl.min;
+            item.scaleMax = tpl.max;
+            item.points = pointValues(tpl.min, tpl.max).map((v) => ({ value: v, description: old.get(v) || "" }));
+            render();
+          });
+        });
+      }
+
+      async function load() {
+        if (!Number.isFinite(actorId) || !Number.isFinite(idAssessment) || actorId <= 0 || idAssessment <= 0) {
+          msg.textContent = "Invalid edit URL.";
+          msg.classList.add("error");
+          return;
+        }
+        try {
+          const [subjectsResp, assessmentResp] = await Promise.all([
+            fetch(`/api/admin/subjects?actorId=${encodeURIComponent(actorId)}`),
+            fetch(
+              `/api/assessment-draft/${encodeURIComponent(idAssessment)}?actorId=${encodeURIComponent(actorId)}`
+            ),
+          ]);
+          const subjectsData = await subjectsResp.json();
+          const assessmentData = await assessmentResp.json();
+          if (!subjectsResp.ok || !subjectsData.ok) throw new Error(subjectsData.message || "Could not load subjects.");
+          if (!assessmentResp.ok || !assessmentData.ok)
+            throw new Error(assessmentData.message || "Could not load assessment.");
+
+          state.subjects = subjectsData.subjects || [];
+          const a = assessmentData.assessment;
+          state.idSub = a.idSubject;
+          state.assessmentDate = a.assessmentDate || "";
+          state.title = a.title || "";
+          state.description = a.description || "";
+          state.items = (a.items || []).map(normalizeItem);
+          render();
+        } catch (err) {
+          msg.textContent = String(err.message || err);
+          msg.classList.add("error");
+        }
+      }
+
+      function buildPayload() {
+        const fd = new FormData(form);
+        state.idSub = Number(fd.get("idSub"));
+        state.assessmentDate = String(fd.get("assessmentDate") || "").trim();
+        state.title = String(fd.get("title") || "").trim();
+        state.description = String(fd.get("description") || "").trim();
+
+        state.items = state.items.map((item, idx) => {
+          const scaleType = String(fd.get(`item-${idx}-scale`) || "1-3");
+          const tpl = scaleTemplates[scaleType] || scaleTemplates["1-3"];
+          const points = pointValues(tpl.min, tpl.max).map((v) => ({
+            value: v,
+            description: String(fd.get(`item-${idx}-point-${v}`) || "").trim(),
+          }));
+          return {
+            name: String(fd.get(`item-${idx}-name`) || "").trim(),
+            description: String(fd.get(`item-${idx}-description`) || "").trim(),
+            scaleType,
+            scaleMin: tpl.min,
+            scaleMax: tpl.max,
+            points,
+          };
+        });
+
+        return {
+          actorId,
+          idSub: state.idSub,
+          assessmentDate: state.assessmentDate,
+          title: state.title,
+          description: state.description,
+          items: state.items,
+        };
+      }
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        msg.textContent = "Saving...";
+        msg.classList.remove("error");
+        const payload = buildPayload();
+        try {
+          const response = await fetch(`/api/assessment-draft/${encodeURIComponent(idAssessment)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const data = await response.json();
+          if (!response.ok || !data.ok) throw new Error(data.message || "Could not save.");
+          console.log("Assessment update payload:", payload);
+          console.log("Assessment update response:", data);
+          msg.textContent = "Assessment updated.";
+        } catch (err) {
+          msg.textContent = String(err.message || err);
+          msg.classList.add("error");
+        }
+      });
+
+      void load();
+    </script>
+  </body>
+</html>

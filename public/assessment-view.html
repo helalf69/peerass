@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Peer assessment — View assessment</title>
+    <link rel="icon" href="/include/favicon.png" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <img class="logo-backdrop" src="/include/logo.png" alt="" aria-hidden="true" />
+    <nav class="top-actions" aria-label="Quick actions">
+      <a class="button button-sm" href="/" title="Home">&#x1F3E0;</a>
+    </nav>
+    <main class="page">
+      <section class="content assessment-wizard" aria-labelledby="view-title">
+        <h1 id="view-title" class="title">View assessment</h1>
+        <p id="view-subtitle" class="subtitle">Loading...</p>
+        <div id="rollcall-wrap" class="wizard-points hidden">
+          <div class="rollcall-header">
+            <h3 class="wizard-points-title">Rollcall</h3>
+            <button type="button" id="rollcall-toggle-btn" class="button button-sm">Open rollcall</button>
+          </div>
+          <p id="rollcall-message" class="assessment-meta"></p>
+          <div id="rollcall-panel" class="hidden">
+            <div id="rollcall-completion" class="assessment-meta"></div>
+            <div id="rollcall-list" class="rollcall-list"></div>
+            <div class="wizard-actions">
+              <button type="button" id="rollcall-save-btn" class="button button-sm primary">Save rollcall</button>
+            </div>
+          </div>
+        </div>
+        <div id="view-list" class="wizard-points hidden"></div>
+        <p id="view-message" class="login-message" aria-live="polite"></p>
+      </section>
+    </main>
+    <script>
+      const params = new URLSearchParams(window.location.search);
+      const actorId = Number(params.get("actorId"));
+      const idAssessment = Number(params.get("idAssessment"));
+      const subtitle = document.getElementById("view-subtitle");
+      const list = document.getElementById("view-list");
+      const msg = document.getElementById("view-message");
+      const rollcallWrap = document.getElementById("rollcall-wrap");
+      const rollcallMsg = document.getElementById("rollcall-message");
+      const rollcallPanel = document.getElementById("rollcall-panel");
+      const rollcallList = document.getElementById("rollcall-list");
+      const rollcallToggleBtn = document.getElementById("rollcall-toggle-btn");
+      const rollcallSaveBtn = document.getElementById("rollcall-save-btn");
+      const rollcallCompletion = document.getElementById("rollcall-completion");
+      let canUseRollcall = false;
+      let rollcallLoaded = false;
+
+      function esc(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      async function readMaybeJson(response) {
+        const ct = String(response.headers.get("content-type") || "");
+        if (ct.includes("application/json")) return response.json();
+        const text = await response.text();
+        throw new Error(`Unexpected response (${response.status}): ${text.slice(0, 140)}`);
+      }
+
+      async function load() {
+        if (!Number.isFinite(actorId) || actorId <= 0 || !Number.isFinite(idAssessment) || idAssessment <= 0) {
+          msg.textContent = "Invalid assessment link.";
+          msg.classList.add("error");
+          return;
+        }
+        try {
+          const response = await fetch(
+            `/api/assessment-submissions/${encodeURIComponent(idAssessment)}?actorId=${encodeURIComponent(actorId)}`
+          );
+          const data = await readMaybeJson(response);
+          if (!response.ok || !data.ok) throw new Error(data.message || "Could not load assessment view.");
+
+          subtitle.textContent = `${data.assessment.title} — ${data.assessment.subName}`;
+          if (data.actor && data.actor.isAdmin) {
+            rollcallWrap.classList.remove("hidden");
+            const nowSec = Math.floor(Date.now() / 1000);
+            const startsAt = Number(data.assessment.startsAt);
+            const endsAt = Number(data.assessment.endsAt);
+            canUseRollcall =
+              Number.isFinite(startsAt) &&
+              Number.isFinite(endsAt) &&
+              nowSec >= startsAt &&
+              nowSec <= endsAt;
+            rollcallMsg.textContent = canUseRollcall
+              ? "Mark students absent to remove them from required submissions."
+              : "Rollcall is only available during the assessment time window.";
+            rollcallToggleBtn.disabled = !canUseRollcall;
+          }
+          const classmates = Array.isArray(data.classmates) ? data.classmates : [];
+          if (classmates.length === 0) {
+            msg.textContent = "No present classmates found for this assessment.";
+            return;
+          }
+
+          list.classList.remove("hidden");
+          list.innerHTML = `
+            <h3 class="wizard-points-title">Classmates and assessment status</h3>
+            ${classmates
+              .map(
+                (cm) => `
+              <div class="assessment-item assessment-inline-row">
+                <span class="assessment-title">${esc(cm.targetName)}</span>
+                <span class="assessment-meta">${cm.assessed ? "Assessed" : "Not assessed yet"}</span>
+                <span class="assessment-meta assessment-inline-scores">${
+                  cm.assessed
+                    ? (cm.scores || []).map((score) => `${esc(score.criterionName)}: ${esc(score.scaleValue)}`).join(" | ")
+                    : ""
+                }</span>
+              </div>
+            `
+              )
+              .join("")}
+          `;
+          msg.textContent = "";
+        } catch (err) {
+          msg.textContent = String(err.message || err);
+          msg.classList.add("error");
+        }
+      }
+
+      async function loadRollcall() {
+        if (!canUseRollcall) return;
+        const response = await fetch(
+          `/api/assessment-rollcall/${encodeURIComponent(idAssessment)}?actorId=${encodeURIComponent(actorId)}`
+        );
+        const data = await readMaybeJson(response);
+        if (!response.ok || !data.ok) throw new Error(data.message || "Could not load rollcall.");
+        const completion = data.completion || {};
+        rollcallCompletion.textContent = `Received ${completion.receivedSubmissions || 0} / ${
+          completion.expectedSubmissions || 0
+        } required submissions · Present: ${completion.presentCount || 0} · Absent: ${completion.absentCount || 0}`;
+        const roster = Array.isArray(data.roster) ? data.roster : [];
+        rollcallList.innerHTML = roster
+          .map(
+            (row) => `
+          <label class="rollcall-row">
+            <span>${esc(row.name)}</span>
+            <select data-id-student="${row.idStudent}">
+              <option value="present" ${row.attendanceStatus === "present" ? "selected" : ""}>Present</option>
+              <option value="absent" ${row.attendanceStatus === "absent" ? "selected" : ""}>Absent</option>
+            </select>
+          </label>
+        `
+          )
+          .join("");
+        rollcallLoaded = true;
+      }
+
+      rollcallToggleBtn.addEventListener("click", async () => {
+        const opening = rollcallPanel.classList.contains("hidden");
+        if (!opening) {
+          rollcallPanel.classList.add("hidden");
+          rollcallToggleBtn.textContent = "Open rollcall";
+          return;
+        }
+        rollcallPanel.classList.remove("hidden");
+        rollcallToggleBtn.textContent = "Hide rollcall";
+        if (!rollcallLoaded) {
+          rollcallMsg.textContent = "Loading rollcall...";
+          try {
+            await loadRollcall();
+            rollcallMsg.textContent = "Update attendance and save.";
+          } catch (err) {
+            rollcallMsg.textContent = String(err.message || err);
+            rollcallMsg.classList.add("error");
+          }
+        }
+      });
+
+      rollcallSaveBtn.addEventListener("click", async () => {
+        if (!rollcallLoaded) return;
+        const updates = Array.from(rollcallList.querySelectorAll("select[data-id-student]")).map((selectEl) => ({
+          idStudent: Number(selectEl.getAttribute("data-id-student")),
+          attendanceStatus: String(selectEl.value || "present"),
+        }));
+        rollcallMsg.textContent = "Saving rollcall...";
+        rollcallMsg.classList.remove("error");
+        rollcallSaveBtn.disabled = true;
+        try {
+          const response = await fetch(`/api/assessment-rollcall/${encodeURIComponent(idAssessment)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ actorId, updates }),
+          });
+          const data = await readMaybeJson(response);
+          if (!response.ok || !data.ok) throw new Error(data.message || "Could not save rollcall.");
+          rollcallMsg.textContent = "Rollcall saved.";
+          await loadRollcall();
+        } catch (err) {
+          rollcallMsg.textContent = String(err.message || err);
+          rollcallMsg.classList.add("error");
+        } finally {
+          rollcallSaveBtn.disabled = false;
+        }
+      });
+
+      void load();
+    </script>
+  </body>
+</html>

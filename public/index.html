@@ -235,11 +235,31 @@
                 currentUser && currentUser.isAdmin
                   ? `<a class="button button-sm" href="/assessment-edit.html?actorId=${encodeURIComponent(currentUser.idUser)}&idAssessment=${encodeURIComponent(a.idAssessment)}">Edit</a>`
                   : "";
+              const studentLink =
+                currentUser && !currentUser.isAdmin
+                  ? a.attendanceStatus === "absent"
+                    ? `<span class="assessment-meta absent-label">Marked absent</span>`
+                    : a.hasSubmission
+                    ? `<a class="button button-sm" href="/assessment-view.html?actorId=${encodeURIComponent(currentUser.idUser)}&idAssessment=${encodeURIComponent(a.idAssessment)}">View assessment</a>`
+                    : `<a class="button button-sm primary" href="/assessment-start.html?actorId=${encodeURIComponent(currentUser.idUser)}&idAssessment=${encodeURIComponent(a.idAssessment)}">Start assessment</a>`
+                  : "";
+              const nowSec = Math.floor(Date.now() / 1000);
+              const withinWindow =
+                a.startsAt != null &&
+                a.endsAt != null &&
+                nowSec >= Number(a.startsAt) &&
+                nowSec <= Number(a.endsAt);
+              const rollcallLink =
+                currentUser && currentUser.isAdmin && withinWindow
+                  ? `<a class="button button-sm" href="/assessment-view.html?actorId=${encodeURIComponent(currentUser.idUser)}&idAssessment=${encodeURIComponent(a.idAssessment)}">Rollcall</a>`
+                  : "";
               return `<li class="assessment-item">
                 <span class="assessment-title">${esc(a.title)}</span>
                 <span class="assessment-meta">${esc(a.subName)} · ${status}</span>
                 <span class="assessment-dates">Start: ${esc(formatTs(a.startsAt))} · End: ${esc(formatTs(a.endsAt))}</span>
                 ${editLink}
+                ${rollcallLink}
+                ${studentLink}
               </li>`;
             })
             .join("");

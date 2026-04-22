@@ -62,6 +62,12 @@ function all(db, sql, params = []) {
   });
 }
 
+async function ensureColumn(db, tableName, columnName, alterSql) {
+  const columns = await all(db, `PRAGMA table_info(${tableName})`);
+  const exists = columns.some((c) => String(c.name || "").toLowerCase() === String(columnName || "").toLowerCase());
+  if (!exists) await run(db, alterSql);
+}
+
 async function initDatabase() {
   if (!fs.existsSync(privateDir)) fs.mkdirSync(privateDir, { recursive: true });
 
@@ -170,6 +176,10 @@ async function initDatabase() {
       idTarget INTEGER PRIMARY KEY AUTOINCREMENT,
       idAssessment INTEGER NOT NULL,
       idStudent INTEGER NOT NULL,
+      attendance_status TEXT NOT NULL DEFAULT 'present',
+      marked_by INTEGER,
+      marked_at INTEGER,
+      note TEXT,
       UNIQUE(idAssessment, idStudent),
       FOREIGN KEY(idAssessment) REFERENCES assessment(idAssessment) ON DELETE CASCADE,
       FOREIGN KEY(idStudent) REFERENCES user(idUser) ON DELETE CASCADE
@@ -218,6 +228,36 @@ async function initDatabase() {
   );
 
   await run(db, "PRAGMA foreign_keys = ON");
+  await ensureColumn(
+    db,
+    "assessment_target",
+    "attendance_status",
+    `ALTER TABLE assessment_target ADD COLUMN attendance_status TEXT NOT NULL DEFAULT 'present'`
+  );
+  await ensureColumn(
+    db,
+    "assessment_target",
+    "marked_by",
+    `ALTER TABLE assessment_target ADD COLUMN marked_by INTEGER`
+  );
+  await ensureColumn(
+    db,
+    "assessment_target",
+    "marked_at",
+    `ALTER TABLE assessment_target ADD COLUMN marked_at INTEGER`
+  );
+  await ensureColumn(
+    db,
+    "assessment_target",
+    "note",
+    `ALTER TABLE assessment_target ADD COLUMN note TEXT`
+  );
+  await run(
+    db,
+    `UPDATE assessment_target
+     SET attendance_status = 'present'
+     WHERE attendance_status IS NULL OR attendance_status NOT IN ('present', 'absent')`
+  );
 
   // Normalize legacy/plain default password storage (if any rows ever contain the literal default).
   await run(

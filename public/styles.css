@@ -346,6 +346,29 @@ body {
   color: var(--muted);
 }
 
+.assessment-inline-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+}
+
+.assessment-inline-scores {
+  flex: 1 1 360px;
+  min-width: 240px;
+  overflow-wrap: anywhere;
+}
+
+.absent-label {
+  color: #aa2140;
+  font-weight: 700;
+}
+
+.item-description {
+  white-space: pre-wrap;
+  tab-size: 4;
+}
+
 .button-with-favicon {
   display: inline-flex;
   align-items: center;
@@ -432,6 +455,48 @@ body {
 }
 
 .wizard-point-field span {
+  font-weight: 650;
+}
+
+.scale-buttons-row {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.scale-point-btn {
+  min-width: 64px;
+  text-align: center;
+  white-space: normal;
+}
+
+.rollcall-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rollcall-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.rollcall-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid rgba(112, 54, 35, 0.14);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.45);
+  padding: 8px 10px;
+}
+
+.rollcall-row span {
   font-weight: 650;
 }
 

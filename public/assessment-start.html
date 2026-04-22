@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Peer assessment — Start assessment</title>
+    <link rel="icon" href="/include/favicon.png" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <img class="logo-backdrop" src="/include/logo.png" alt="" aria-hidden="true" />
+    <nav class="top-actions" aria-label="Quick actions">
+      <a class="button button-sm" href="/" title="Home">&#x1F3E0;</a>
+    </nav>
+    <main class="page">
+      <section class="content assessment-wizard" aria-labelledby="start-title">
+        <h1 id="start-title" class="title">Start assessment</h1>
+        <p id="start-subtitle" class="subtitle">Loading assessment...</p>
+        <div id="assessment-form" class="wizard-form hidden">
+          <label>
+            Student to assess
+            <select id="target-student-select"></select>
+          </label>
+          <div id="assessment-criteria" class="wizard-points"></div>
+          <div class="wizard-actions">
+            <button type="button" id="save-assessment-btn" class="button primary">Save</button>
+          </div>
+        </div>
+        <p id="start-message" class="login-message" aria-live="polite"></p>
+      </section>
+    </main>
+    <script>
+      const params = new URLSearchParams(window.location.search);
+      const actorId = Number(params.get("actorId"));
+      const idAssessment = Number(params.get("idAssessment"));
+      const subtitle = document.getElementById("start-subtitle");
+      const formWrap = document.getElementById("assessment-form");
+      const targetSelect = document.getElementById("target-student-select");
+      const criteriaWrap = document.getElementById("assessment-criteria");
+      const message = document.getElementById("start-message");
+      const saveBtn = document.getElementById("save-assessment-btn");
+      const selectedScores = new Map();
+      let currentCriteria = [];
+
+      function esc(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function decodeFormatting(value) {
+        return String(value || "")
+          .replaceAll("\\n", "\n")
+          .replaceAll("\\t", "\t");
+      }
+
+      function formatTs(sec) {
+        const d = new Date(Number(sec) * 1000);
+        return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
+      }
+
+      async function readMaybeJson(response) {
+        const ct = String(response.headers.get("content-type") || "");
+        if (ct.includes("application/json")) return response.json();
+        const text = await response.text();
+        throw new Error(`Unexpected response (${response.status}): ${text.slice(0, 140)}`);
+      }
+
+      async function load() {
+        if (!Number.isFinite(actorId) || actorId <= 0 || !Number.isFinite(idAssessment) || idAssessment <= 0) {
+          message.textContent = "Invalid assessment link.";
+          message.classList.add("error");
+          return;
+        }
+
+        try {
+          const response = await fetch(
+            `/api/assessment-view/${encodeURIComponent(idAssessment)}?actorId=${encodeURIComponent(actorId)}`
+          );
+          const data = await readMaybeJson(response);
+          if (!response.ok || !data.ok) throw new Error(data.message || "Could not load assessment.");
+
+          const a = data.assessment;
+          subtitle.textContent = `${a.title} — ${a.subName} · Start: ${formatTs(a.startsAt)} · End: ${formatTs(a.endsAt)}`;
+          formWrap.classList.remove("hidden");
+          if (a.attendanceStatus === "absent") {
+            targetSelect.innerHTML = `<option value="">You are marked absent for this assessment</option>`;
+            criteriaWrap.innerHTML = "";
+            message.textContent = "You are marked absent, so no submissions are required.";
+            saveBtn.disabled = true;
+            return;
+          }
+          saveBtn.disabled = false;
+
+          const peers = Array.isArray(a.peers) ? a.peers : [];
+          targetSelect.innerHTML =
+            peers.length > 0
+              ? peers
+                  .map((p) => `<option value="${p.idUser}">${esc(p.name)}</option>`)
+                  .join("")
+              : `<option value="">No classmates available</option>`;
+
+          const criteria = Array.isArray(a.criteria) ? a.criteria : [];
+          currentCriteria = criteria;
+          criteriaWrap.innerHTML = `
+            <h3 class="wizard-points-title">Items to assess</h3>
+            ${criteria
+              .map((c) => {
+                const points = Array.isArray(c.points) ? c.points : [];
+                const useDescriptionLabels = points.length > 0 && points.length < 5;
+                const buttons = points
+                  .map((p) => {
+                    const plainDescription = String(p.description || "");
+                    const label = useDescriptionLabels ? plainDescription || String(p.value) : String(p.value);
+                    return `
+                      <button
+                        type="button"
+                        class="button button-sm scale-point-btn"
+                        data-criterion-id="${c.idCriterion}"
+                        data-scale-value="${p.value}"
+                        title="${esc(plainDescription || "")}"
+                      >
+                        ${esc(label)}
+                      </button>
+                    `;
+                  })
+                  .join("");
+
+                return `
+                  <div class="assessment-item">
+                    <span class="assessment-title">${esc(c.name)}</span>
+                    <span class="assessment-meta item-description">${esc(decodeFormatting(c.description || ""))}</span>
+                    <div class="scale-buttons-row">${buttons}</div>
+                  </div>
+                `;
+              })
+              .join("")}
+          `;
+
+          criteriaWrap.querySelectorAll(".scale-point-btn").forEach((btn) => {
+            btn.addEventListener("click", () => {
+              const criterionId = Number(btn.getAttribute("data-criterion-id"));
+              const scaleValue = Number(btn.getAttribute("data-scale-value"));
+              selectedScores.set(criterionId, scaleValue);
+
+              criteriaWrap
+                .querySelectorAll(`.scale-point-btn[data-criterion-id="${criterionId}"]`)
+                .forEach((peerBtn) => peerBtn.classList.remove("primary"));
+              btn.classList.add("primary");
+            });
+          });
+
+          message.textContent =
+            peers.length > 0
+              ? "Choose a classmate and select one scale point per item."
+              : "No classmates available to assess in this subject.";
+          selectedScores.clear();
+        } catch (err) {
+          message.textContent = String(err.message || err);
+          message.classList.add("error");
+        }
+      }
+
+      saveBtn.addEventListener("click", async () => {
+        const idTargetStudent = Number(targetSelect.value);
+        if (!Number.isFinite(idTargetStudent) || idTargetStudent <= 0) {
+          message.textContent = "Choose a student to assess.";
+          message.classList.add("error");
+          return;
+        }
+        if (selectedScores.size < currentCriteria.length) {
+          message.textContent = "Select one scale point for each item before saving.";
+          message.classList.add("error");
+          return;
+        }
+
+        const scores = currentCriteria.map((c) => ({
+          idCriterion: c.idCriterion,
+          scaleValue: selectedScores.get(c.idCriterion),
+        }));
+
+        message.textContent = "Saving...";
+        message.classList.remove("error");
+        saveBtn.disabled = true;
+        try {
+          const response = await fetch("/api/assessment-submit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              actorId,
+              idAssessment,
+              idTargetStudent,
+              scores,
+            }),
+          });
+          const data = await readMaybeJson(response);
+          if (!response.ok || !data.ok) throw new Error(data.message || "Could not save assessment.");
+          if (data.completed) {
+            message.textContent = "All peers assessed. Returning to start page...";
+            window.location.href = "/";
+            return;
+          }
+          message.textContent = "Saved. Loading next peer...";
+          await load();
+        } catch (err) {
+          message.textContent = String(err.message || err);
+          message.classList.add("error");
+        } finally {
+          saveBtn.disabled = false;
+        }
+      });
+
+      void load();
+    </script>
+  </body>
+</html>

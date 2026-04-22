@@ -907,14 +907,23 @@ function registerRoutes(app, deps) {
       }
       const classmates = await all(
         getDb(),
-        `SELECT t.idStudent as idTargetStudent, u.Name as targetName
-         FROM assessment_target t
-         JOIN user u ON u.idUser = t.idStudent
-         WHERE t.idAssessment = ?
-           AND t.attendance_status = 'present'
-           AND u.idUser != ?
+        `SELECT cm.idTargetStudent, u.Name as targetName
+         FROM (
+           SELECT t.idStudent as idTargetStudent
+           FROM assessment_target t
+           WHERE t.idAssessment = ?
+             AND t.attendance_status = 'present'
+             AND t.idStudent != ?
+           UNION
+           SELECT sub.idTargetStudent
+           FROM assessment_submission sub
+           WHERE sub.idAssessment = ?
+             AND sub.idAssessor = ?
+             AND sub.idTargetStudent != ?
+         ) cm
+         JOIN user u ON u.idUser = cm.idTargetStudent
          ORDER BY u.Name COLLATE NOCASE ASC`,
-        [idAssessment, auth.actor.idUser]
+        [idAssessment, auth.actor.idUser, idAssessment, auth.actor.idUser, auth.actor.idUser]
       );
 
       return res.json({

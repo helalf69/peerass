@@ -22,22 +22,44 @@ async function safeRollback(db, run) {
 }
 
 function createRequireAdminActor({ getDb, get }) {
-  return async function requireAdminActor(actorId) {
-    const id = Number(actorId);
-    if (!Number.isFinite(id) || id <= 0) return { ok: false, status: 400, message: "Invalid actor." };
+  return async function requireAdminActor(req) {
+    const id = Number(req && req.session ? req.session.userId : 0);
+    if (!Number.isFinite(id) || id <= 0) return { ok: false, status: 401, message: "Login required." };
     const actor = await get(getDb(), `SELECT idUser, isAdmin FROM user WHERE idUser = ?`, [id]);
-    if (!actor || !actor.isAdmin) return { ok: false, status: 403, message: "Admin access required." };
+    if (!actor) return { ok: false, status: 401, message: "Login required." };
+    if (!actor.isAdmin) return { ok: false, status: 403, message: "Admin access required." };
     return { ok: true, actor };
   };
 }
 
 function createRequireUser({ getDb, get }) {
-  return async function requireUser(actorId) {
-    const id = Number(actorId);
-    if (!Number.isFinite(id) || id <= 0) return { ok: false, status: 400, message: "Invalid user." };
+  return async function requireUser(req) {
+    const id = Number(req && req.session ? req.session.userId : 0);
+    if (!Number.isFinite(id) || id <= 0) return { ok: false, status: 401, message: "Login required." };
     const actor = await get(getDb(), `SELECT idUser, isAdmin, Name FROM user WHERE idUser = ?`, [id]);
-    if (!actor) return { ok: false, status: 404, message: "User not found." };
+    if (!actor) return { ok: false, status: 401, message: "Login required." };
     return { ok: true, actor };
+  };
+}
+
+function createLoginRateLimiter() {
+  const attempts = new Map();
+  const WINDOW_MS = 15 * 60 * 1000;
+  const MAX_ATTEMPTS = 10;
+  const BLOCK_MS = 30 * 60 * 1000;
+
+  return function loginRateLimit(req, res, next) {
+    const key = String(req.ip || "unknown");
+    const now = Date.now();
+    const state = attempts.get(key) || { failures: [], blockedUntil: 0 };
+    if (state.blockedUntil > now) {
+      return res.status(429).json({ ok: false, message: "Too many login attempts. Try again later." });
+    }
+    state.failures = state.failures.filter((ts) => now - ts <= WINDOW_MS);
+    req.loginAttemptKey = key;
+    req.loginAttemptState = state;
+    attempts.set(key, state);
+    next();
   };
 }
 
@@ -122,12 +144,13 @@ function registerRoutes(app, deps) {
   } = deps;
   const requireAdminActor = createRequireAdminActor({ getDb, get });
   const requireUser = createRequireUser({ getDb, get });
+  const loginRateLimit = createLoginRateLimiter();
 
   app.get("/health", (_req, res) => {
     res.json({ status: "ok", service: "peerass" });
   });
 
-  app.post("/api/login", async (req, res) => {
+  app.post("/api/login", loginRateLimit, async (req, res) => {
     try {
       const name = String(req.body.name || "").trim();
       const password = String(req.body.password || "");
@@ -135,8 +158,22 @@ function registerRoutes(app, deps) {
 
       const user = await get(getDb(), `SELECT idUser, isAdmin, Name, Password FROM user WHERE Name = ?`, [name]);
       if (!user || !verifyPassword(password, user.Password)) {
+        const now = Date.now();
+        const state = req.loginAttemptState;
+        state.failures.push(now);
+        if (state.failures.length >= 10) state.blockedUntil = now + 30 * 60 * 1000;
+        req.loginAttemptState = state;
         return res.status(401).json({ ok: false, message: "Invalid credentials." });
       }
+      req.loginAttemptState.failures = [];
+      req.loginAttemptState.blockedUntil = 0;
+      await new Promise((resolve, reject) => {
+        req.session.regenerate((err) => {
+          if (err) return reject(err);
+          req.session.userId = user.idUser;
+          resolve();
+        });
+      });
 
       await run(getDb(), `UPDATE user SET last_used = strftime('%s','now') WHERE idUser = ?`, [user.idUser]);
       await run(getDb(), `INSERT INTO user_activity (idUser, kind) VALUES (?, 'login')`, [user.idUser]);
@@ -155,9 +192,34 @@ function registerRoutes(app, deps) {
     }
   });
 
+  app.post("/api/logout", async (req, res) => {
+    req.session.destroy(() => res.json({ ok: true }));
+  });
+
+  app.get("/api/me", async (req, res) => {
+    try {
+      const auth = await requireUser(req);
+      if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
+      const userRow = await get(getDb(), `SELECT Password FROM user WHERE idUser = ?`, [auth.actor.idUser]);
+      return res.json({
+        ok: true,
+        user: {
+          idUser: auth.actor.idUser,
+          name: auth.actor.Name,
+          isAdmin: Boolean(auth.actor.isAdmin),
+          mustChangePassword: Boolean(userRow && verifyPassword(DEFAULT_PASSWORD, userRow.Password)),
+        },
+      });
+    } catch (_err) {
+      return res.status(500).json({ ok: false, message: "Could not load user." });
+    }
+  });
+
   app.post("/api/change-password", async (req, res) => {
     try {
-      const idUser = Number(req.body.idUser);
+      const auth = await requireUser(req);
+      if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
+      const idUser = auth.actor.idUser;
       const oldPassword = String(req.body.oldPassword || "");
       const newPassword = String(req.body.newPassword || "");
       if (!Number.isFinite(idUser) || idUser <= 0) return res.status(400).json({ ok: false, message: "Invalid user." });
@@ -183,7 +245,7 @@ function registerRoutes(app, deps) {
 
   app.post("/api/admin/add-user", async (req, res) => {
     try {
-      const auth = await requireAdminActor(req.body.actorId);
+      const auth = await requireAdminActor(req);
       if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
       const name = String(req.body.name || "").trim();
       const idSub = Number(req.body.idSub || 0);
@@ -209,7 +271,7 @@ function registerRoutes(app, deps) {
 
   app.get("/api/admin/subjects", async (req, res) => {
     try {
-      const auth = await requireAdminActor(req.query.actorId);
+      const auth = await requireAdminActor(req);
       if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
       const subjects = await all(
         getDb(),
@@ -224,7 +286,7 @@ function registerRoutes(app, deps) {
 
   app.post("/api/admin/add-subject", async (req, res) => {
     try {
-      const auth = await requireAdminActor(req.body.actorId);
+      const auth = await requireAdminActor(req);
       if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
       const subName = String(req.body.subName || "").trim();
       if (!subName) return res.status(400).json({ ok: false, message: "Subject name is required." });
@@ -238,7 +300,7 @@ function registerRoutes(app, deps) {
 
   app.post("/api/admin/copy-subject-users", async (req, res) => {
     try {
-      const auth = await requireAdminActor(req.body.actorId);
+      const auth = await requireAdminActor(req);
       if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
       const sourceIdSub = Number(req.body.sourceIdSub);
       const newSubName = String(req.body.newSubName || "").trim();
@@ -262,7 +324,7 @@ function registerRoutes(app, deps) {
 
   app.post("/api/admin/delete-subject", async (req, res) => {
     try {
-      const auth = await requireAdminActor(req.body.actorId);
+      const auth = await requireAdminActor(req);
       if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
       const idSub = Number(req.body.idSub);
       if (!Number.isFinite(idSub) || idSub <= 0) return res.status(400).json({ ok: false, message: "Invalid subject." });
@@ -316,7 +378,7 @@ function registerRoutes(app, deps) {
 
   app.get("/api/admin/users", async (req, res) => {
     try {
-      const auth = await requireAdminActor(req.query.actorId);
+      const auth = await requireAdminActor(req);
       if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
       const rows = await all(
         getDb(),
@@ -337,7 +399,9 @@ function registerRoutes(app, deps) {
 
   app.get("/api/assessments", async (req, res) => {
     try {
-      const idUser = Number(req.query.userId);
+      const auth = await requireUser(req);
+      if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
+      const idUser = auth.actor.idUser;
       if (!Number.isFinite(idUser) || idUser <= 0) return res.json({ ok: true, assessments: [] });
       const rows = await all(
         getDb(),
@@ -386,13 +450,12 @@ function registerRoutes(app, deps) {
 
   app.post("/api/assessment-draft/echo", async (req, res) => {
     try {
-      const actorId = Number(req.body.actorId);
       const idSub = Number(req.body.idSub);
       const assessmentDate = String(req.body.assessmentDate || "").trim();
       const title = String(req.body.title || "").trim();
       const description = String(req.body.description || "").trim();
       const items = Array.isArray(req.body.items) ? req.body.items : [];
-      const auth = await requireAdminActor(actorId);
+      const auth = await requireAdminActor(req);
       if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
       if (!Number.isFinite(idSub) || idSub <= 0) return res.status(400).json({ ok: false, message: "Subject is required." });
       const subject = await get(getDb(), `SELECT idSub FROM subject WHERE idSub = ? AND idUser = ?`, [idSub, auth.actor.idUser]);
@@ -456,9 +519,8 @@ function registerRoutes(app, deps) {
   app.get("/api/assessment-draft/:idAssessment", async (req, res) => {
     try {
       const idAssessment = Number(req.params.idAssessment);
-      const actorId = Number(req.query.actorId);
       if (!Number.isFinite(idAssessment) || idAssessment <= 0) return res.status(400).json({ ok: false, message: "Invalid assessment." });
-      const auth = await requireAdminActor(actorId);
+      const auth = await requireAdminActor(req);
       if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
       const row = await get(
         getDb(),
@@ -507,14 +569,13 @@ function registerRoutes(app, deps) {
   app.post("/api/assessment-draft/:idAssessment", async (req, res) => {
     try {
       const idAssessment = Number(req.params.idAssessment);
-      const actorId = Number(req.body.actorId);
       const idSub = Number(req.body.idSub);
       const assessmentDate = String(req.body.assessmentDate || "").trim();
       const title = String(req.body.title || "").trim();
       const description = String(req.body.description || "").trim();
       const items = Array.isArray(req.body.items) ? req.body.items : [];
       if (!Number.isFinite(idAssessment) || idAssessment <= 0) return res.status(400).json({ ok: false, message: "Invalid assessment." });
-      const auth = await requireAdminActor(actorId);
+      const auth = await requireAdminActor(req);
       if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
       if (!Number.isFinite(idSub) || idSub <= 0) return res.status(400).json({ ok: false, message: "Subject is required." });
       if (!title) return res.status(400).json({ ok: false, message: "Title is required." });
@@ -584,9 +645,8 @@ function registerRoutes(app, deps) {
   app.get("/api/assessment-view/:idAssessment", async (req, res) => {
     try {
       const idAssessment = Number(req.params.idAssessment);
-      const actorId = Number(req.query.actorId);
       if (!Number.isFinite(idAssessment) || idAssessment <= 0) return res.status(400).json({ ok: false, message: "Invalid assessment." });
-      const auth = await requireUser(actorId);
+      const auth = await requireUser(req);
       if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
 
       const row = await get(
@@ -685,7 +745,7 @@ function registerRoutes(app, deps) {
 
   app.get("/assessment-new.html", async (req, res) => {
     try {
-      const auth = await requireAdminActor(req.query.actorId);
+      const auth = await requireAdminActor(req);
       if (!auth.ok) return res.status(auth.status).send("Admin access required.");
       return res.sendFile(path.join(publicDir, "assessment-new.html"));
     } catch (_err) {
@@ -693,9 +753,19 @@ function registerRoutes(app, deps) {
     }
   });
 
+  app.get("/admin.html", async (req, res) => {
+    try {
+      const auth = await requireAdminActor(req);
+      if (!auth.ok) return res.status(auth.status).send("Admin access required.");
+      return res.sendFile(path.join(publicDir, "admin.html"));
+    } catch (_err) {
+      return res.status(500).send("Could not open page.");
+    }
+  });
+
   app.get("/assessment-edit.html", async (req, res) => {
     try {
-      const auth = await requireAdminActor(req.query.actorId);
+      const auth = await requireAdminActor(req);
       if (!auth.ok) return res.status(auth.status).send("Admin access required.");
       return res.sendFile(path.join(publicDir, "assessment-edit.html"));
     } catch (_err) {
@@ -705,7 +775,7 @@ function registerRoutes(app, deps) {
 
   app.get("/assessment-start.html", async (req, res) => {
     try {
-      const auth = await requireUser(req.query.actorId);
+      const auth = await requireUser(req);
       if (!auth.ok) return res.status(auth.status).send("User access required.");
       return res.sendFile(path.join(publicDir, "assessment-start.html"));
     } catch (_err) {
@@ -715,7 +785,7 @@ function registerRoutes(app, deps) {
 
   app.get("/assessment-view.html", async (req, res) => {
     try {
-      const auth = await requireUser(req.query.actorId);
+      const auth = await requireUser(req);
       if (!auth.ok) return res.status(auth.status).send("User access required.");
       return res.sendFile(path.join(publicDir, "assessment-view.html"));
     } catch (_err) {
@@ -725,12 +795,11 @@ function registerRoutes(app, deps) {
 
   app.post("/api/assessment-submit", async (req, res) => {
     try {
-      const actorId = Number(req.body.actorId);
       const idAssessment = Number(req.body.idAssessment);
       const idTargetStudent = Number(req.body.idTargetStudent);
       const scores = Array.isArray(req.body.scores) ? req.body.scores : [];
 
-      const auth = await requireUser(actorId);
+      const auth = await requireUser(req);
       if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
       if (!Number.isFinite(idAssessment) || idAssessment <= 0) {
         return res.status(400).json({ ok: false, message: "Invalid assessment." });
@@ -855,11 +924,10 @@ function registerRoutes(app, deps) {
   app.get("/api/assessment-submissions/:idAssessment", async (req, res) => {
     try {
       const idAssessment = Number(req.params.idAssessment);
-      const actorId = Number(req.query.actorId);
       if (!Number.isFinite(idAssessment) || idAssessment <= 0) {
         return res.status(400).json({ ok: false, message: "Invalid assessment." });
       }
-      const auth = await requireUser(actorId);
+      const auth = await requireUser(req);
       if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
 
       const assessment = await get(
@@ -959,9 +1027,8 @@ function registerRoutes(app, deps) {
   app.get("/api/assessment-rollcall/:idAssessment", async (req, res) => {
     try {
       const idAssessment = Number(req.params.idAssessment);
-      const actorId = Number(req.query.actorId);
       if (!Number.isFinite(idAssessment) || idAssessment <= 0) return res.status(400).json({ ok: false, message: "Invalid assessment." });
-      const auth = await requireAdminActor(actorId);
+      const auth = await requireAdminActor(req);
       if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
 
       const assessment = await get(
@@ -1011,10 +1078,9 @@ function registerRoutes(app, deps) {
   app.post("/api/assessment-rollcall/:idAssessment", async (req, res) => {
     try {
       const idAssessment = Number(req.params.idAssessment);
-      const actorId = Number(req.body.actorId);
       const updates = Array.isArray(req.body.updates) ? req.body.updates : [];
       if (!Number.isFinite(idAssessment) || idAssessment <= 0) return res.status(400).json({ ok: false, message: "Invalid assessment." });
-      const auth = await requireAdminActor(actorId);
+      const auth = await requireAdminActor(req);
       if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
 
       const assessment = await get(

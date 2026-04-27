@@ -12,8 +12,12 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
+    "connect-sqlite3": "^0.9.16",
     "dotenv": "^17.4.1",
     "express": "^4.21.0",
+    "express-session": "^1.19.0",
+    "helmet": "^8.1.0",
+    "mysql2": "^3.22.3",
     "sqlite3": "^6.0.1"
   },
   "devDependencies": {

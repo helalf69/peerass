@@ -31,7 +31,6 @@
       const msg = document.getElementById("edit-message");
 
       const params = new URLSearchParams(window.location.search);
-      const actorId = Number(params.get("actorId"));
       const idAssessment = Number(params.get("idAssessment"));
 
       const scaleTemplates = {
@@ -149,17 +148,20 @@
       }
 
       async function load() {
-        if (!Number.isFinite(actorId) || !Number.isFinite(idAssessment) || actorId <= 0 || idAssessment <= 0) {
+        if (!Number.isFinite(idAssessment) || idAssessment <= 0) {
           msg.textContent = "Invalid edit URL.";
           msg.classList.add("error");
           return;
         }
         try {
+          const meResp = await fetch("/api/me");
+          const meData = await readMaybeJson(meResp);
+          if (!meResp.ok || !meData.ok || !meData.user || !meData.user.isAdmin) {
+            throw new Error("Admin login required.");
+          }
           const [subjectsResp, assessmentResp] = await Promise.all([
-            fetch(`/api/admin/subjects?actorId=${encodeURIComponent(actorId)}`),
-            fetch(
-              `/api/assessment-draft/${encodeURIComponent(idAssessment)}?actorId=${encodeURIComponent(actorId)}`
-            ),
+            fetch("/api/admin/subjects"),
+            fetch(`/api/assessment-draft/${encodeURIComponent(idAssessment)}`),
           ]);
           const subjectsData = await readMaybeJson(subjectsResp);
           const assessmentData = await readMaybeJson(assessmentResp);
@@ -206,7 +208,6 @@
         });
 
         return {
-          actorId,
           idSub: state.idSub,
           assessmentDate: state.assessmentDate,
           title: state.title,

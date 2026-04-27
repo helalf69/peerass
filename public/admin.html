@@ -120,17 +120,6 @@
     </div>
 
     <script>
-      const USER_STORE_KEY = "peerassUser";
-      let currentUser = null;
-      try {
-        currentUser = JSON.parse(localStorage.getItem(USER_STORE_KEY) || "null");
-      } catch (_err) {
-        currentUser = null;
-      }
-      if (!currentUser || !currentUser.isAdmin) {
-        window.location.href = "/";
-      }
-
       const userForm = document.getElementById("add-user-form");
       const subjectForm = document.getElementById("add-subject-form");
       const deleteSubjectForm = document.getElementById("delete-subject-form");
@@ -171,7 +160,6 @@
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            actorId: currentUser.idUser,
             idSub,
             deleteOrphans,
           }),
@@ -179,7 +167,7 @@
       }
 
       async function loadSubjects() {
-        const response = await fetch(`/api/admin/subjects?actorId=${encodeURIComponent(currentUser.idUser)}`);
+        const response = await fetch("/api/admin/subjects");
         const data = await response.json();
         if (!response.ok || !data.ok) throw new Error(data.message || "Could not load subjects.");
 
@@ -209,7 +197,7 @@
 
       async function loadUsers() {
         setMsg(usersMessage, "Loading users...");
-        const response = await fetch(`/api/admin/users?actorId=${encodeURIComponent(currentUser.idUser)}`);
+        const response = await fetch("/api/admin/users");
         const data = await response.json();
         if (!response.ok || !data.ok) throw new Error(data.message || "Could not load users.");
 
@@ -239,7 +227,7 @@
           const response = await fetch("/api/admin/add-subject", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ actorId: currentUser.idUser, subName }),
+            body: JSON.stringify({ subName }),
           });
           const data = await response.json();
           if (!response.ok || !data.ok) {
@@ -327,7 +315,7 @@
           const response = await fetch("/api/admin/add-user", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ actorId: currentUser.idUser, name, idSub }),
+            body: JSON.stringify({ name, idSub }),
           });
           const data = await response.json();
           if (!response.ok || !data.ok) {
@@ -353,7 +341,7 @@
           const response = await fetch("/api/admin/copy-subject-users", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ actorId: currentUser.idUser, sourceIdSub, newSubName }),
+            body: JSON.stringify({ sourceIdSub, newSubName }),
           });
           const data = await response.json();
           if (!response.ok || !data.ok) {
@@ -369,8 +357,22 @@
         }
       });
 
-      loadSubjects().catch((err) => setMsg(subjectMessage, err.message, true));
-      loadUsers().catch((err) => setMsg(usersMessage, err.message, true));
+      async function bootstrap() {
+        try {
+          const response = await fetch("/api/me");
+          const data = await response.json();
+          if (!response.ok || !data.ok || !data.user || !data.user.isAdmin) {
+            window.location.href = "/";
+            return;
+          }
+          await loadSubjects();
+          await loadUsers();
+        } catch (_err) {
+          window.location.href = "/";
+        }
+      }
+
+      void bootstrap();
     </script>
   </body>
 </html>

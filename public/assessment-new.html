@@ -48,7 +48,6 @@
 
       const state = {
         step: 0,
-        actorId: null,
         subjects: [],
         idSub: "",
         assessmentDate: "",
@@ -315,23 +314,15 @@
       }
 
       async function loadSetupContext() {
-        let user = null;
         try {
-          const raw = localStorage.getItem("peerassUser");
-          user = raw ? JSON.parse(raw) : null;
-        } catch (_err) {
-          user = null;
-        }
-
-        if (!user || !user.idUser || !user.isAdmin) {
-          showError("Admin login required.");
-          nextBtn.disabled = true;
-          return;
-        }
-        state.actorId = user.idUser;
-
-        try {
-          const response = await fetch(`/api/admin/subjects?actorId=${encodeURIComponent(state.actorId)}`);
+          const meResponse = await fetch("/api/me");
+          const meData = await meResponse.json();
+          if (!meResponse.ok || !meData.ok || !meData.user || !meData.user.isAdmin) {
+            showError("Admin login required.");
+            nextBtn.disabled = true;
+            return;
+          }
+          const response = await fetch("/api/admin/subjects");
           const data = await response.json();
           if (!response.ok || !data.ok) {
             showError(data.message || "Could not load subjects.");
@@ -354,7 +345,6 @@
 
       function buildDraftPayload() {
         return {
-          actorId: state.actorId,
           idSub: Number(state.idSub),
           assessmentDate: state.assessmentDate,
           title: state.title,

@@ -129,8 +129,6 @@
       const pwForm = document.getElementById("pw-form");
       const pwMsg = document.getElementById("pw-message");
       const pwIgnore = document.getElementById("pw-ignore");
-      const USER_STORE_KEY = "peerassUser";
-
       let currentUser = null;
 
       function toggleOverlay(show) {
@@ -143,24 +141,12 @@
 
       function setAuthedUI(user) {
         currentUser = user || null;
-        if (currentUser) {
-          localStorage.setItem(USER_STORE_KEY, JSON.stringify(currentUser));
-        } else {
-          localStorage.removeItem(USER_STORE_KEY);
-        }
 
         const authed = Boolean(currentUser);
         whoami.classList.toggle("hidden", !authed);
         adminLink.classList.toggle("hidden", !(authed && currentUser.isAdmin));
         addAssessmentLink.classList.toggle("hidden", !(authed && currentUser.isAdmin));
-        if (authed && currentUser.isAdmin) {
-          addAssessmentLink.setAttribute(
-            "href",
-            `/assessment-new.html?actorId=${encodeURIComponent(currentUser.idUser)}`
-          );
-        } else {
-          addAssessmentLink.setAttribute("href", "/assessment-new.html");
-        }
+        addAssessmentLink.setAttribute("href", "/assessment-new.html");
 
         if (authed) {
           whoami.textContent = currentUser.name;
@@ -211,7 +197,7 @@
         assessmentsHint.textContent = "Loading…";
         try {
           const response = await fetch(
-            `/api/assessments?userId=${encodeURIComponent(currentUser.idUser)}`
+            "/api/assessments"
           );
           const data = await response.json();
           if (!response.ok || !data.ok) {
@@ -233,15 +219,15 @@
               const status = esc(assessmentStatusLabel(a));
               const editLink =
                 currentUser && currentUser.isAdmin
-                  ? `<a class="button button-sm" href="/assessment-edit.html?actorId=${encodeURIComponent(currentUser.idUser)}&idAssessment=${encodeURIComponent(a.idAssessment)}">Edit</a>`
+                  ? `<a class="button button-sm" href="/assessment-edit.html?idAssessment=${encodeURIComponent(a.idAssessment)}">Edit</a>`
                   : "";
               const studentLink =
                 currentUser && !currentUser.isAdmin
                   ? a.attendanceStatus === "absent"
                     ? `<span class="assessment-meta absent-label">Marked absent</span>`
                     : a.hasSubmission
-                    ? `<a class="button button-sm" href="/assessment-view.html?actorId=${encodeURIComponent(currentUser.idUser)}&idAssessment=${encodeURIComponent(a.idAssessment)}">View assessment</a>`
-                    : `<a class="button button-sm primary" href="/assessment-start.html?actorId=${encodeURIComponent(currentUser.idUser)}&idAssessment=${encodeURIComponent(a.idAssessment)}">Start assessment</a>`
+                    ? `<a class="button button-sm" href="/assessment-view.html?idAssessment=${encodeURIComponent(a.idAssessment)}">View assessment</a>`
+                    : `<a class="button button-sm primary" href="/assessment-start.html?idAssessment=${encodeURIComponent(a.idAssessment)}">Start assessment</a>`
                   : "";
               const nowSec = Math.floor(Date.now() / 1000);
               const withinWindow =
@@ -251,7 +237,7 @@
                 nowSec <= Number(a.endsAt);
               const rollcallLink =
                 currentUser && currentUser.isAdmin && withinWindow
-                  ? `<a class="button button-sm" href="/assessment-view.html?actorId=${encodeURIComponent(currentUser.idUser)}&idAssessment=${encodeURIComponent(a.idAssessment)}">Rollcall</a>`
+                  ? `<a class="button button-sm" href="/assessment-view.html?idAssessment=${encodeURIComponent(a.idAssessment)}">Rollcall</a>`
                   : "";
               return `<li class="assessment-item">
                 <span class="assessment-title">${esc(a.title)}</span>
@@ -269,13 +255,21 @@
         }
       }
 
-      function logout() {
+      async function logout() {
+        try {
+          await fetch("/api/logout", { method: "POST" });
+        } catch (_err) {
+          // ignore network errors on logout, clear UI anyway
+        }
         setAuthedUI(null);
         togglePwOverlay(false);
       }
 
       authBtn.addEventListener("click", () => {
-        if (currentUser) return logout();
+        if (currentUser) {
+          void logout();
+          return;
+        }
         toggleOverlay(true);
       });
 
@@ -357,7 +351,6 @@
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              idUser: currentUser.idUser,
               oldPassword,
               newPassword,
             }),
@@ -381,10 +374,19 @@
       });
 
       // Initial UI
-      try {
-        const raw = localStorage.getItem(USER_STORE_KEY);
-        setAuthedUI(raw ? JSON.parse(raw) : null);
-      } catch (_err) {
+      async function bootstrapSession() {
+        try {
+          const response = await fetch("/api/me");
+          if (!response.ok) throw new Error("Not logged in");
+          const data = await response.json();
+          if (!data.ok || !data.user) throw new Error("Not logged in");
+          setAuthedUI(data.user);
+        } catch (_err) {
+          setAuthedUI(null);
+        }
+      }
+      void bootstrapSession();
+      if (!currentUser) {
         setAuthedUI(null);
       }
       void loadAssessmentsList();

@@ -56,6 +56,8 @@
         itemCount: 1,
         items: [],
       };
+      let isSaving = false;
+      let savedAssessmentId = null;
 
       function esc(value) {
         return String(value)
@@ -379,12 +381,23 @@
           if (state.step > 0) {
             copyScaleToNextItem(state.step - 1);
           }
+          savedAssessmentId = null;
           state.step += 1;
           renderStep();
           return;
         }
 
+        if (savedAssessmentId) {
+          wizardMessage.textContent = `Assessment already saved (id ${savedAssessmentId}).`;
+          wizardMessage.classList.remove("error");
+          return;
+        }
+        if (isSaving) return;
+
         const payload = buildDraftPayload();
+        isSaving = true;
+        nextBtn.disabled = true;
+        nextBtn.textContent = "Saving...";
         try {
           const response = await fetch("/api/assessment-draft/echo", {
             method: "POST",
@@ -397,17 +410,26 @@
             return;
           }
 
+          savedAssessmentId = Number(data.idAssessment) || null;
           console.log("Assessment draft sent:", payload);
           console.log("Assessment save response:", data);
           wizardMessage.textContent = `Assessment saved (id ${data.idAssessment}). Check browser console for JSON.`;
           wizardMessage.classList.remove("error");
+          nextBtn.textContent = "Saved";
         } catch (_err) {
           showError("Could not save assessment.");
+          nextBtn.disabled = false;
+          nextBtn.textContent = "Finish";
+        } finally {
+          isSaving = false;
         }
       });
 
       backBtn.addEventListener("click", () => {
+        if (isSaving) return;
         if (state.step === 0) return;
+        savedAssessmentId = null;
+        nextBtn.disabled = false;
         if (state.step > 0) state.step -= 1;
         renderStep();
       });

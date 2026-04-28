@@ -1,7 +1,6 @@
 const path = require("path");
 const express = require("express");
 const session = require("express-session");
-const SQLiteStore = require("connect-sqlite3")(session);
 const helmet = require("helmet");
 require("dotenv").config();
 
@@ -12,6 +11,7 @@ const { registerRoutes } = require("./private/routes");
 const app = express();
 const port = Number(process.env.PORT || 3001);
 const DEFAULT_PASSWORD = "Java5cript";
+const dbClient = String(process.env.DB_CLIENT || "sqlite").trim().toLowerCase();
 const sessionSecret = String(process.env.SESSION_SECRET || "");
 if (sessionSecret.length < 32) {
   // eslint-disable-next-line no-console
@@ -33,17 +33,25 @@ app.use(
 );
 app.use(
   session({
-    store: new SQLiteStore({
-      db: "sessions.db",
-      dir: privateDir,
-    }),
+    store:
+      dbClient === "sqlite"
+        ? (() => {
+            const SQLiteStore = require("connect-sqlite3")(session);
+            return new SQLiteStore({
+              db: "sessions.db",
+              dir: privateDir,
+            });
+          })()
+        : undefined,
     name: "peerass.sid",
     secret: sessionSecret || "dev-only-insecure-session-secret-change-me",
     resave: false,
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      // "auto" ensures cookies work on http:// in production-like local setups,
+      // while still marking cookies Secure when the app is actually served over HTTPS.
+      secure: "auto",
       sameSite: "lax",
       maxAge: 1000 * 60 * 60 * 12,
     },

@@ -307,12 +307,22 @@
             return;
           }
 
+          // Optimistically set UI, then immediately confirm session state with /api/me.
+          // This avoids a "looks logged in" UI if the session cookie didn't persist.
           setAuthedUI(data.user);
+          const confirmed = await bootstrapSession();
+          if (!confirmed) {
+            msg.textContent = "Login did not persist (session cookie missing). Refresh and try again.";
+            msg.classList.add("error");
+            toggleOverlay(true);
+            return;
+          }
+
           toggleOverlay(false);
           msg.textContent = "";
           form.reset();
 
-          if (data.user.mustChangePassword) {
+          if (currentUser && currentUser.mustChangePassword) {
             pwForm.reset();
             pwMsg.textContent = "You are using the default password. Please change it.";
             pwMsg.classList.remove("error");
@@ -381,8 +391,10 @@
           const data = await response.json();
           if (!data.ok || !data.user) throw new Error("Not logged in");
           setAuthedUI(data.user);
+          return true;
         } catch (_err) {
           setAuthedUI(null);
+          return false;
         }
       }
       void bootstrapSession();

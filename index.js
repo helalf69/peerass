@@ -18,6 +18,10 @@ if (sessionSecret.length < 32) {
   console.warn("SESSION_SECRET is missing or too short. Set a 32+ char secret before internet deployment.");
 }
 
+// Browser cookies: must be a real boolean. Non-boolean truthy values break HTTP deployments.
+// Use SESSION_COOKIE_SECURE=true only when users reach the site over HTTPS (so the cookie can use Secure).
+const sessionCookieSecure = String(process.env.SESSION_COOKIE_SECURE || "").toLowerCase() === "true";
+
 let db;
 const getDb = () => db;
 const publicDir = path.join(__dirname, "public");
@@ -49,9 +53,7 @@ app.use(
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      // "auto" ensures cookies work on http:// in production-like local setups,
-      // while still marking cookies Secure when the app is actually served over HTTPS.
-      secure: "auto",
+      secure: sessionCookieSecure,
       sameSite: "lax",
       maxAge: 1000 * 60 * 60 * 12,
     },
@@ -80,6 +82,18 @@ app.get(/.*/, (_req, res) => {
   res.sendFile(path.join(publicDir, "index.html"), (err) => {
     if (err && !res.headersSent) res.status(404).send("Not found");
   });
+});
+
+// JSON errors for API when something throws before a handler responds (avoids HTML error pages breaking fetch().json()).
+app.use((err, req, res, next) => {
+  // eslint-disable-next-line no-console
+  console.error(err);
+  if (res.headersSent) return next(err);
+  const p = String(req.path || "");
+  if (p.startsWith("/api")) {
+    return res.status(500).json({ ok: false, message: err.message || "Server error." });
+  }
+  res.status(500).send("Server error.");
 });
 
 initDatabase()

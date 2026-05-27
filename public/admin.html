@@ -86,6 +86,7 @@
                 <tr>
                   <th>Name</th>
                   <th>Password changed</th>
+                  <th class="admin-actions-col">Actions</th>
                 </tr>
               </thead>
               <tbody id="users-tbody"></tbody>
@@ -210,13 +211,53 @@
                 return `<tr>
                   <td>${esc(u.name)}</td>
                   <td class="${cls}" aria-label="${u.passwordChanged ? "changed" : "default"}">${mark}</td>
+                  <td class="admin-actions-col">
+                    <button type="button" class="button button-sm admin-reset-pw-btn" data-id-user="${u.idUser}" data-user-name="${esc(u.name)}">
+                      Reset password
+                    </button>
+                  </td>
                 </tr>`;
               })
               .join("")
-          : `<tr><td colspan="2">No users yet.</td></tr>`;
+          : `<tr><td colspan="3">No users yet.</td></tr>`;
 
         setMsg(usersMessage, `${users.length} user(s).`);
       }
+
+      usersTbody.addEventListener("click", async (e) => {
+        const btn = e.target.closest(".admin-reset-pw-btn");
+        if (!btn) return;
+        const idUser = Number(btn.getAttribute("data-id-user"));
+        const userName = btn.getAttribute("data-user-name") || "";
+        if (!Number.isFinite(idUser) || idUser <= 0) return;
+        if (
+          !confirm(
+            `Reset password for "${userName}" to the default (Java5cript)? The student should sign in and change it afterward.`
+          )
+        ) {
+          return;
+        }
+        btn.disabled = true;
+        setMsg(usersMessage, "Resetting password…");
+        try {
+          const response = await fetch("/api/admin/reset-user-password", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ idUser }),
+          });
+          const data = await response.json();
+          if (!response.ok || !data.ok) {
+            setMsg(usersMessage, data.message || "Could not reset password.", true);
+            btn.disabled = false;
+            return;
+          }
+          setMsg(usersMessage, data.message || "Password reset.");
+          await loadUsers();
+        } catch (_err) {
+          setMsg(usersMessage, "Network error. Try again.", true);
+          btn.disabled = false;
+        }
+      });
 
       subjectForm.addEventListener("submit", async (e) => {
         e.preventDefault();

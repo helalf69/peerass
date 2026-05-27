@@ -13,6 +13,20 @@ function selectedDateToRangeSeconds(assessmentDate) {
   return { startsAt, endsAt };
 }
 
+function isAssessmentDayOrLater(startsAt) {
+  const starts = Number(startsAt);
+  if (!Number.isFinite(starts)) return false;
+  const assessmentDate = new Date(starts * 1000);
+  const today = new Date();
+  const assessmentMidnight = new Date(
+    assessmentDate.getFullYear(),
+    assessmentDate.getMonth(),
+    assessmentDate.getDate()
+  ).getTime();
+  const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  return assessmentMidnight <= todayMidnight;
+}
+
 async function safeRollback(db, run) {
   try {
     await run(db, "ROLLBACK");
@@ -397,6 +411,34 @@ function registerRoutes(app, deps) {
     }
   });
 
+  app.post("/api/admin/reset-user-password", async (req, res) => {
+    try {
+      const auth = await requireAdminActor(req);
+      if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
+      const idTarget = Number(req.body.idUser || 0);
+      if (!Number.isFinite(idTarget) || idTarget <= 0) return res.status(400).json({ ok: false, message: "Invalid user." });
+
+      const target = await get(
+        getDb(),
+        `SELECT u.idUser
+         FROM user u
+         JOIN userSubject us ON us.idUser = u.idUser
+         JOIN subject s ON s.idSub = us.idSub
+         WHERE s.idUser = ? AND u.isAdmin = 0 AND u.idUser = ?
+         LIMIT 1`,
+        [auth.actor.idUser, idTarget]
+      );
+      if (!target) return res.status(404).json({ ok: false, message: "User not found or not in your subjects." });
+
+      const newHash = hashPassword(DEFAULT_PASSWORD);
+      await run(getDb(), `UPDATE user SET Password = ?, last_used = strftime('%s','now') WHERE idUser = ?`, [newHash, idTarget]);
+      await run(getDb(), `INSERT INTO user_activity (idUser, kind) VALUES (?, 'password_reset_default')`, [idTarget]);
+      return res.json({ ok: true, message: "Password reset to the default." });
+    } catch (_err) {
+      return res.status(500).json({ ok: false, message: "Password reset failed." });
+    }
+  });
+
   app.get("/api/assessments", async (req, res) => {
     try {
       const auth = await requireUser(req);
@@ -405,7 +447,7 @@ function registerRoutes(app, deps) {
       if (!Number.isFinite(idUser) || idUser <= 0) return res.json({ ok: true, assessments: [] });
       const rows = await all(
         getDb(),
-        `SELECT DISTINCT a.idAssessment, a.idSubject, a.title, a.instructions, a.isPlanned, a.isOpen, a.starts_at, a.ends_at, s.subName,
+        `SELECT DISTINCT a.idAssessment, a.idSubject, a.title, a.instructions, a.isPlanned, a.isOpen, a.isHidden, a.starts_at, a.ends_at, s.subName,
                 at.attendance_status as my_attendance_status
          FROM assessment a
          JOIN subject s ON s.idSub = a.idSubject
@@ -417,6 +459,7 @@ function registerRoutes(app, deps) {
            UNION
            SELECT idSub FROM subject WHERE idUser = ?
          )
+           AND a.isHidden = 0
          ORDER BY (a.starts_at IS NULL), a.starts_at DESC, a.idAssessment DESC`,
         [idUser, idUser, idUser]
       );
@@ -437,6 +480,7 @@ function registerRoutes(app, deps) {
         instructions: r.instructions,
         isPlanned: Boolean(r.isPlanned),
         isOpen: Boolean(r.isOpen),
+        isHidden: Boolean(r.isHidden),
         startsAt: r.starts_at,
         endsAt: r.ends_at,
         hasSubmission: submittedSet.has(Number(r.idAssessment)),
@@ -793,6 +837,16 @@ function registerRoutes(app, deps) {
     }
   });
 
+  app.get("/assessment-results.html", async (req, res) => {
+    try {
+      const auth = await requireAdminActor(req);
+      if (!auth.ok) return res.status(auth.status).send("Admin access required.");
+      return res.sendFile(path.join(publicDir, "assessment-results.html"));
+    } catch (_err) {
+      return res.status(500).send("Could not open page.");
+    }
+  });
+
   app.post("/api/assessment-submit", async (req, res) => {
     try {
       const idAssessment = Number(req.body.idAssessment);
@@ -1021,6 +1075,140 @@ function registerRoutes(app, deps) {
       });
     } catch (_err) {
       return res.status(500).json({ ok: false, message: "Could not load assessment submissions." });
+    }
+  });
+
+  app.get("/api/admin/assessment-results/:idAssessment", async (req, res) => {
+    try {
+      const idAssessment = Number(req.params.idAssessment);
+      if (!Number.isFinite(idAssessment) || idAssessment <= 0) return res.status(400).json({ ok: false, message: "Invalid assessment." });
+      const auth = await requireAdminActor(req);
+      if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
+
+      const assessment = await get(
+        getDb(),
+        `SELECT a.idAssessment, a.idSubject, a.title, a.starts_at, a.ends_at, a.isHidden, s.subName
+         FROM assessment a
+         JOIN subject s ON s.idSub = a.idSubject
+         WHERE a.idAssessment = ? AND s.idUser = ?`,
+        [idAssessment, auth.actor.idUser]
+      );
+      if (!assessment) return res.status(404).json({ ok: false, message: "Assessment not found." });
+      if (!isAssessmentDayOrLater(assessment.starts_at)) {
+        return res.status(403).json({ ok: false, message: "Results are available on the assessment day and after." });
+      }
+
+      await syncAssessmentTargets({ getDb, run }, idAssessment, assessment.idSubject);
+
+      const criteria = await all(
+        getDb(),
+        `SELECT idCriterion, name, description, sort_order
+         FROM assessment_criterion
+         WHERE idAssessment = ?
+         ORDER BY sort_order ASC`,
+        [idAssessment]
+      );
+      const roster = await all(
+        getDb(),
+        `SELECT t.idStudent, u.Name as name, t.attendance_status as attendanceStatus
+         FROM assessment_target t
+         JOIN user u ON u.idUser = t.idStudent
+         WHERE t.idAssessment = ? AND u.isAdmin = 0
+         ORDER BY u.Name COLLATE NOCASE ASC`,
+        [idAssessment]
+      );
+      const scoreRows = await all(
+        getDb(),
+        `SELECT sub.idTargetStudent, ss.idCriterion, COUNT(ss.scale_value) as scoreCount, AVG(ss.scale_value) as avgScore
+         FROM assessment_submission sub
+         JOIN assessment_submission_score ss ON ss.idSubmission = sub.idSubmission
+         WHERE sub.idAssessment = ?
+         GROUP BY sub.idTargetStudent, ss.idCriterion`,
+        [idAssessment]
+      );
+      const submissionRows = await all(
+        getDb(),
+        `SELECT idTargetStudent, COUNT(DISTINCT idAssessor) as submissionCount
+         FROM assessment_submission
+         WHERE idAssessment = ?
+         GROUP BY idTargetStudent`,
+        [idAssessment]
+      );
+
+      const scoreMap = new Map();
+      for (const r of scoreRows) {
+        scoreMap.set(`${Number(r.idTargetStudent)}:${Number(r.idCriterion)}`, {
+          count: Number(r.scoreCount || 0),
+          average: r.avgScore == null ? null : Number(r.avgScore),
+        });
+      }
+      const submissionMap = new Map(submissionRows.map((r) => [Number(r.idTargetStudent), Number(r.submissionCount || 0)]));
+      const completion = await getAssessmentCompletionStats({ getDb, get }, idAssessment);
+
+      return res.json({
+        ok: true,
+        assessment: {
+          idAssessment: assessment.idAssessment,
+          title: assessment.title,
+          subName: assessment.subName,
+          startsAt: assessment.starts_at,
+          endsAt: assessment.ends_at,
+          isHidden: Boolean(assessment.isHidden),
+        },
+        completion,
+        criteria: criteria.map((c) => ({
+          idCriterion: c.idCriterion,
+          name: c.name,
+          description: c.description || "",
+          sortOrder: c.sort_order,
+        })),
+        students: roster.map((student) => ({
+          idStudent: student.idStudent,
+          name: student.name,
+          attendanceStatus: student.attendanceStatus === "absent" ? "absent" : "present",
+          submissionCount: submissionMap.get(Number(student.idStudent)) || 0,
+          scores: criteria.map((criterion) => ({
+            idCriterion: criterion.idCriterion,
+            criterionName: criterion.name,
+            ...(scoreMap.get(`${Number(student.idStudent)}:${Number(criterion.idCriterion)}`) || {
+              count: 0,
+              average: null,
+            }),
+          })),
+        })),
+      });
+    } catch (_err) {
+      return res.status(500).json({ ok: false, message: "Could not load assessment results." });
+    }
+  });
+
+  app.post("/api/admin/hide-assessment/:idAssessment", async (req, res) => {
+    try {
+      const idAssessment = Number(req.params.idAssessment);
+      if (!Number.isFinite(idAssessment) || idAssessment <= 0) return res.status(400).json({ ok: false, message: "Invalid assessment." });
+      const auth = await requireAdminActor(req);
+      if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
+
+      const assessment = await get(
+        getDb(),
+        `SELECT a.idAssessment
+         FROM assessment a
+         JOIN subject s ON s.idSub = a.idSubject
+         WHERE a.idAssessment = ? AND s.idUser = ?`,
+        [idAssessment, auth.actor.idUser]
+      );
+      if (!assessment) return res.status(404).json({ ok: false, message: "Assessment not found." });
+
+      await run(
+        getDb(),
+        `UPDATE assessment
+         SET isHidden = 1, isOpen = 0, isPlanned = 0, updated_at = strftime('%s','now')
+         WHERE idAssessment = ?`,
+        [idAssessment]
+      );
+      return res.json({ ok: true, message: "Assessment hidden from the front page." });
+    } catch (_err) {
+      return res.status(500).json({ ok: false, message: "Could not hide assessment." });
     }
   });
 

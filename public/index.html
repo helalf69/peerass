@@ -3,6 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- If the app is mounted under a path (e.g. /peerass), set content to that path (no trailing slash). -->
+    <meta name="peerass-api-root" content="" />
     <title>Peer assessment</title>
     <link rel="icon" href="/include/favicon.png" />
     <link rel="stylesheet" href="/styles.css" />
@@ -15,27 +17,28 @@
       aria-hidden="true"
     />
 
-    <nav class="top-actions" aria-label="Quick actions">
-      <span class="whoami hidden" id="whoami" aria-live="polite"></span>
-
-      <a class="button button-sm hidden" id="admin-link" href="/admin.html" title="Admin">🅰️</a>
-
-      <button
-        type="button"
-        class="button button-sm"
-        id="auth-button"
-        aria-controls="login-overlay"
-        title="Login / Logout"
-      >
-        🔓
-      </button>
-
-      <a class="button button-sm" href="/" title="Home">🏠</a>
-    </nav>
-
     <main class="page">
       <section class="content">
-        <h1 class="title">Peer assessment</h1>
+        <div class="content-header">
+          <h1 class="title">Peer assessment</h1>
+          <nav class="top-actions" aria-label="Quick actions">
+            <span class="whoami hidden" id="whoami" aria-live="polite"></span>
+
+            <a class="button button-sm hidden" id="admin-link" href="/admin.html" title="Admin">🅰️</a>
+
+            <button
+              type="button"
+              class="button button-sm auth-button"
+              id="auth-button"
+              aria-controls="login-overlay"
+              aria-label="Log in"
+              title="Log in"
+            >
+              <img class="auth-icon" src="/include/login.png" alt="" width="24" height="24" />
+              <span class="visually-hidden">Log in</span>
+            </button>
+          </nav>
+        </div>
 <!--        
         <p class="subtitle">
           A clean, peach-themed landing page with a contrasting
@@ -131,12 +134,59 @@
       const pwIgnore = document.getElementById("pw-ignore");
       let currentUser = null;
 
+      function peerassApiRoot() {
+        const el = document.querySelector('meta[name="peerass-api-root"]');
+        const raw = el ? String(el.getAttribute("content") || "").trim() : "";
+        return raw.replace(/\/$/, "");
+      }
+
+      function peerassApiUrl(resourcePath) {
+        const p = resourcePath.startsWith("/") ? resourcePath : `/${resourcePath}`;
+        return `${peerassApiRoot()}${p}`;
+      }
+
+      async function peerassFetchJson(resourcePath, init = {}) {
+        const url = peerassApiUrl(resourcePath);
+        let response;
+        try {
+          response = await fetch(url, {
+            credentials: "include",
+            ...init,
+          });
+        } catch (err) {
+          throw new Error(
+            err && err.message ? err.message : "Network error (could not reach server). Check URL and connection."
+          );
+        }
+        const text = await response.text();
+        let data = {};
+        if (text) {
+          try {
+            data = JSON.parse(text);
+          } catch (_parseErr) {
+            const bit = text.replace(/\s+/g, " ").slice(0, 160);
+            throw new Error(
+              `Server returned non-JSON (${response.status}). ${bit}${text.length > 160 ? "…" : ""} If you use a reverse proxy, set meta peerass-api-root or fix routing.`
+            );
+          }
+        }
+        return { response, data, url };
+      }
+
       function toggleOverlay(show) {
         overlay.classList.toggle("hidden", !show);
       }
 
       function togglePwOverlay(show) {
         pwOverlay.classList.toggle("hidden", !show);
+      }
+
+      function setAuthButtonState(authed) {
+        authBtn.setAttribute("aria-label", authed ? "Log out" : "Log in");
+        authBtn.setAttribute("title", authed ? "Log out" : "Log in");
+        authBtn.innerHTML = authed
+          ? `<span aria-hidden="true">🔒</span><span class="visually-hidden">Log out</span>`
+          : `<img class="auth-icon" src="/include/login.png" alt="" width="24" height="24" /><span class="visually-hidden">Log in</span>`;
       }
 
       function setAuthedUI(user) {
@@ -150,11 +200,11 @@
 
         if (authed) {
           whoami.textContent = currentUser.name;
-          authBtn.textContent = "🔒";
+          setAuthButtonState(true);
           authBtn.setAttribute("aria-controls", "");
         } else {
           whoami.textContent = "";
-          authBtn.textContent = "🔓";
+          setAuthButtonState(false);
           authBtn.setAttribute("aria-controls", "login-overlay");
         }
         void loadAssessmentsList();
@@ -187,6 +237,20 @@
         return "Closed";
       }
 
+      function isAssessmentDayOrLater(a) {
+        const startsAt = Number(a && a.startsAt);
+        if (!Number.isFinite(startsAt)) return false;
+        const assessmentDate = new Date(startsAt * 1000);
+        const today = new Date();
+        const assessmentMidnight = new Date(
+          assessmentDate.getFullYear(),
+          assessmentDate.getMonth(),
+          assessmentDate.getDate()
+        ).getTime();
+        const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+        return assessmentMidnight <= todayMidnight;
+      }
+
       async function loadAssessmentsList() {
         assessmentsList.innerHTML = "";
         if (!currentUser) {
@@ -196,10 +260,7 @@
         }
         assessmentsHint.textContent = "Loading…";
         try {
-          const response = await fetch(
-            "/api/assessments"
-          );
-          const data = await response.json();
+          const { response, data } = await peerassFetchJson("/api/assessments");
           if (!response.ok || !data.ok) {
             assessmentsHint.textContent = "No available assessments.";
             assessmentsHint.classList.remove("hidden");
@@ -239,12 +300,17 @@
                 currentUser && currentUser.isAdmin && withinWindow
                   ? `<a class="button button-sm" href="/assessment-view.html?idAssessment=${encodeURIComponent(a.idAssessment)}">Rollcall</a>`
                   : "";
+              const resultsLink =
+                currentUser && currentUser.isAdmin && isAssessmentDayOrLater(a)
+                  ? `<a class="button button-sm primary" href="/assessment-results.html?idAssessment=${encodeURIComponent(a.idAssessment)}">View results</a>`
+                  : "";
               return `<li class="assessment-item">
                 <span class="assessment-title">${esc(a.title)}</span>
                 <span class="assessment-meta">${esc(a.subName)} · ${status}</span>
                 <span class="assessment-dates">Start: ${esc(formatTs(a.startsAt))} · End: ${esc(formatTs(a.endsAt))}</span>
                 ${editLink}
                 ${rollcallLink}
+                ${resultsLink}
                 ${studentLink}
               </li>`;
             })
@@ -257,7 +323,7 @@
 
       async function logout() {
         try {
-          await fetch("/api/logout", { method: "POST" });
+          await peerassFetchJson("/api/logout", { method: "POST" });
         } catch (_err) {
           // ignore network errors on logout, clear UI anyway
         }
@@ -294,12 +360,11 @@
         };
 
         try {
-          const response = await fetch("/api/login", {
+          const { response, data } = await peerassFetchJson("/api/login", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
           });
-          const data = await response.json();
 
           if (!response.ok || !data.ok) {
             msg.textContent = data.message || "Login failed.";
@@ -328,8 +393,8 @@
             pwMsg.classList.remove("error");
             togglePwOverlay(true);
           }
-        } catch (_err) {
-          msg.textContent = "Network error. Try again.";
+        } catch (err) {
+          msg.textContent = err instanceof Error ? err.message : "Login failed.";
           msg.classList.add("error");
         }
       });
@@ -357,7 +422,7 @@
         }
 
         try {
-          const response = await fetch("/api/change-password", {
+          const { response, data } = await peerassFetchJson("/api/change-password", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -365,7 +430,6 @@
               newPassword,
             }),
           });
-          const data = await response.json();
           if (!response.ok || !data.ok) {
             pwMsg.textContent = data.message || "Password change failed.";
             pwMsg.classList.add("error");
@@ -377,8 +441,8 @@
           // Don’t keep implying password is default after a successful change.
           setAuthedUI({ ...currentUser, mustChangePassword: false });
           void loadAssessmentsList();
-        } catch (_err) {
-          pwMsg.textContent = "Network error. Try again.";
+        } catch (err) {
+          pwMsg.textContent = err instanceof Error ? err.message : "Password change failed.";
           pwMsg.classList.add("error");
         }
       });
@@ -386,9 +450,8 @@
       // Initial UI
       async function bootstrapSession() {
         try {
-          const response = await fetch("/api/me");
+          const { response, data } = await peerassFetchJson("/api/me");
           if (!response.ok) throw new Error("Not logged in");
-          const data = await response.json();
           if (!data.ok || !data.user) throw new Error("Not logged in");
           setAuthedUI(data.user);
           return true;

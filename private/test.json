@@ -1,76 +1,76 @@
 {
-  "savedAt": 1777363298,
-  "idAssessment": 2,
+  "savedAt": 1777891858,
+  "idAssessment": 3,
   "payload": {
-    "idSub": 1,
-    "assessmentDate": "2026-05-12",
-    "title": "End of week 19",
-    "description": "Målet er at du skal bli mer «profesjonell». Vårt fagområde er i stadig raskere utvikling, og vi må lære oss å følge med. Vi har forskjellige interesseområder (også innen IT), så jeg har laget disse hoved-overskriftene. Hver uke får du en artikkel e.l. hvor du skal fordype deg innen et av disse områdene (det blir ikke alle områdene hver uke, men over tid). Så, du skal lære opp (eller «opplyse», som jeg liker å si) dine medelever.",
+    "idSub": 2,
+    "assessmentDate": "2026-05-07",
+    "title": "Sikkerhet og personvern",
+    "description": "Presentasjon av eget valgt tema: VPN, Bitlocker, USB eller Copyright",
     "itemCount": 3,
     "items": [
       {
         "sortOrder": 0,
-        "name": "Formidling",
-        "description": "a.\tGod bruk av presentasjonsverktøy\nb.\tGod formidling – tydelig, tilpasset publikum",
+        "name": "Presentasjonen",
+        "description": "Tydelig språk, fin presentasjon",
         "scaleType": "1-3",
         "scaleMin": 1,
         "scaleMax": 3,
         "points": [
           {
             "value": 1,
-            "description": "Ikke så bra, veldig grunnleggende"
+            "description": "Kan bli bedre, ja"
           },
           {
             "value": 2,
-            "description": "Kan bli bedre, viser noe innsikt"
+            "description": "Bra"
           },
           {
             "value": 3,
-            "description": "Veldig bra, gode eksempler"
+            "description": "Perfekt"
           }
         ]
       },
       {
         "sortOrder": 1,
-        "name": "Faglighet",
-        "description": "a.\tForklarer vanskelige begreper\nb.\tFlere perspektiv/synspunkt",
+        "name": "Faglig nivå",
+        "description": "Bruker faguttrykk. bruker de rett og forklarer det som trengs.",
         "scaleType": "1-3",
         "scaleMin": 1,
         "scaleMax": 3,
         "points": [
           {
             "value": 1,
-            "description": "Ikke så bra, veldig grunnleggende"
+            "description": "Kan bli bedre, ja"
           },
           {
             "value": 2,
-            "description": "Kan bli bedre, viser noe innsikt"
+            "description": "Bra"
           },
           {
             "value": 3,
-            "description": "Veldig bra, gode eksempler"
+            "description": "Perfekt"
           }
         ]
       },
       {
         "sortOrder": 2,
-        "name": "Tverrfaglighet",
-        "description": "a.\tDekker fagets kjerneelementer \nb.\tDekker fagets tverrfaglige temaer\nc.\tKobles til din hverdag (skole, privat, jobb)",
+        "name": "Yrkesutøvelse",
+        "description": "God eksempler, nyttig informasjon.",
         "scaleType": "1-3",
         "scaleMin": 1,
         "scaleMax": 3,
         "points": [
           {
             "value": 1,
-            "description": "Ikke så bra, veldig grunnleggende"
+            "description": "Kan bli bedre, ja"
           },
           {
             "value": 2,
-            "description": "Kan bli bedre, viser noe innsikt"
+            "description": "Bra"
           },
           {
             "value": 3,
-            "description": "Veldig bra, gode eksempler"
+            "description": "Perfekt"
           }
         ]
       }

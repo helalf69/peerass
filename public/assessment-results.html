@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Peer assessment — Results</title>
+    <link rel="icon" href="/include/favicon.png" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <img class="logo-backdrop" src="/include/logo.png" alt="" aria-hidden="true" />
+    <main class="page">
+      <section class="content assessment-wizard" aria-labelledby="results-title">
+        <div class="content-header">
+          <h1 id="results-title" class="title">Assessment results</h1>
+          <nav class="top-actions" aria-label="Quick actions">
+            <a class="button button-sm" href="/" title="Home">&#x1F3E0;</a>
+          </nav>
+        </div>
+        <p id="results-subtitle" class="subtitle">Loading...</p>
+
+        <div id="results-summary" class="wizard-points hidden"></div>
+        <div id="results-table-wrap" class="table-wrap hidden"></div>
+
+        <div class="wizard-actions">
+          <button type="button" id="hide-assessment-btn" class="button button-sm danger hidden">Hide assessment</button>
+        </div>
+        <p id="results-message" class="login-message" aria-live="polite"></p>
+      </section>
+    </main>
+
+    <script>
+      const params = new URLSearchParams(window.location.search);
+      const idAssessment = Number(params.get("idAssessment"));
+      const subtitle = document.getElementById("results-subtitle");
+      const summary = document.getElementById("results-summary");
+      const tableWrap = document.getElementById("results-table-wrap");
+      const hideBtn = document.getElementById("hide-assessment-btn");
+      const msg = document.getElementById("results-message");
+
+      function esc(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function formatTs(sec) {
+        if (sec == null) return "—";
+        const d = new Date(Number(sec) * 1000);
+        return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
+      }
+
+      function formatAverage(value) {
+        if (value == null || !Number.isFinite(Number(value))) return "—";
+        return Number(value).toFixed(2).replace(/\.?0+$/, "");
+      }
+
+      async function readMaybeJson(response) {
+        const ct = String(response.headers.get("content-type") || "");
+        if (ct.includes("application/json")) return response.json();
+        const text = await response.text();
+        throw new Error(`Unexpected response (${response.status}): ${text.slice(0, 140)}`);
+      }
+
+      function render(data) {
+        const assessment = data.assessment || {};
+        const completion = data.completion || {};
+        const criteria = Array.isArray(data.criteria) ? data.criteria : [];
+        const students = Array.isArray(data.students) ? data.students : [];
+
+        subtitle.textContent = `${assessment.title || "Assessment"} — ${assessment.subName || ""}`;
+        summary.classList.remove("hidden");
+        summary.innerHTML = `
+          <h3 class="wizard-points-title">Summary</h3>
+          <div class="assessment-results-summary">
+            <span>Start: ${esc(formatTs(assessment.startsAt))}</span>
+            <span>End: ${esc(formatTs(assessment.endsAt))}</span>
+            <span>Received: ${esc(completion.receivedSubmissions || 0)} / ${esc(completion.expectedSubmissions || 0)}</span>
+            <span>Present: ${esc(completion.presentCount || 0)}</span>
+            <span>Absent: ${esc(completion.absentCount || 0)}</span>
+          </div>
+        `;
+
+        if (students.length === 0) {
+          tableWrap.classList.remove("hidden");
+          tableWrap.innerHTML = `<p class="assessment-results-empty">No students found for this assessment.</p>`;
+        } else {
+          tableWrap.classList.remove("hidden");
+          tableWrap.innerHTML = `
+            <table class="admin-table assessment-results-table" aria-label="Assessment results">
+              <thead>
+                <tr>
+                  <th>Student</th>
+                  <th>Attendance</th>
+                  <th>Submissions</th>
+                  ${criteria.map((c) => `<th>${esc(c.name)}</th>`).join("")}
+                </tr>
+              </thead>
+              <tbody>
+                ${students
+                  .map(
+                    (student) => `
+                  <tr>
+                    <td>${esc(student.name)}</td>
+                    <td>${esc(student.attendanceStatus === "absent" ? "Absent" : "Present")}</td>
+                    <td>${esc(student.submissionCount || 0)}</td>
+                    ${criteria
+                      .map((criterion) => {
+                        const score = (student.scores || []).find(
+                          (s) => Number(s.idCriterion) === Number(criterion.idCriterion)
+                        );
+                        return `<td>${esc(formatAverage(score && score.average))}<span class="assessment-result-count"> (${esc(
+                          score && score.count ? score.count : 0
+                        )})</span></td>`;
+                      })
+                      .join("")}
+                  </tr>
+                `
+                  )
+                  .join("")}
+              </tbody>
+            </table>
+          `;
+        }
+
+        hideBtn.classList.toggle("hidden", Boolean(assessment.isHidden));
+        hideBtn.disabled = Boolean(assessment.isHidden);
+        msg.textContent = assessment.isHidden ? "This assessment is already hidden from the front page." : "";
+        msg.classList.remove("error");
+      }
+
+      async function load() {
+        if (!Number.isFinite(idAssessment) || idAssessment <= 0) {
+          msg.textContent = "Invalid assessment link.";
+          msg.classList.add("error");
+          return;
+        }
+        try {
+          const response = await fetch(`/api/admin/assessment-results/${encodeURIComponent(idAssessment)}`);
+          const data = await readMaybeJson(response);
+          if (!response.ok || !data.ok) throw new Error(data.message || "Could not load results.");
+          render(data);
+        } catch (err) {
+          subtitle.textContent = "Could not load results.";
+          msg.textContent = String(err.message || err);
+          msg.classList.add("error");
+        }
+      }
+
+      hideBtn.addEventListener("click", async () => {
+        if (
+          !confirm(
+            "Hide this assessment from the front page? Existing results will stay stored and this page can still be opened by direct link."
+          )
+        ) {
+          return;
+        }
+        hideBtn.disabled = true;
+        msg.textContent = "Hiding assessment...";
+        msg.classList.remove("error");
+        try {
+          const response = await fetch(`/api/admin/hide-assessment/${encodeURIComponent(idAssessment)}`, {
+            method: "POST",
+          });
+          const data = await readMaybeJson(response);
+          if (!response.ok || !data.ok) throw new Error(data.message || "Could not hide assessment.");
+          msg.textContent = data.message || "Assessment hidden.";
+          hideBtn.classList.add("hidden");
+        } catch (err) {
+          msg.textContent = String(err.message || err);
+          msg.classList.add("error");
+          hideBtn.disabled = false;
+        }
+      });
+
+      void load();
+    </script>
+  </body>
+</html>

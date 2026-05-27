@@ -207,6 +207,7 @@ async function initMySqlDatabase() {
       instructions TEXT NOT NULL,
       isPlanned TINYINT(1) NOT NULL DEFAULT 1,
       isOpen TINYINT(1) NOT NULL DEFAULT 0,
+      isHidden TINYINT(1) NOT NULL DEFAULT 0,
       starts_at BIGINT,
       ends_at BIGINT,
       created_at BIGINT NOT NULL DEFAULT (UNIX_TIMESTAMP()),
@@ -307,6 +308,13 @@ async function initMySqlDatabase() {
       created_at BIGINT NOT NULL DEFAULT (UNIX_TIMESTAMP()),
       CONSTRAINT fk_activity_user FOREIGN KEY (idUser) REFERENCES user(idUser) ON DELETE CASCADE
     ) ENGINE=InnoDB`
+  );
+
+  await ensureColumn(
+    db,
+    "assessment",
+    "isHidden",
+    `ALTER TABLE assessment ADD COLUMN isHidden TINYINT(1) NOT NULL DEFAULT 0`
   );
 
   await ensureColumn(
@@ -415,6 +423,7 @@ async function initDatabase() {
       instructions TEXT NOT NULL,
       isPlanned INTEGER NOT NULL DEFAULT 1,
       isOpen INTEGER NOT NULL DEFAULT 0,
+      isHidden INTEGER NOT NULL DEFAULT 0,
       starts_at INTEGER,
       ends_at INTEGER,
       created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
@@ -519,6 +528,12 @@ async function initDatabase() {
   );
 
   await run(db, "PRAGMA foreign_keys = ON");
+  await ensureColumn(
+    db,
+    "assessment",
+    "isHidden",
+    `ALTER TABLE assessment ADD COLUMN isHidden INTEGER NOT NULL DEFAULT 0`
+  );
   await ensureColumn(
     db,
     "assessment_target",

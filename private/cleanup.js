@@ -21,22 +21,55 @@ async function deleteInactiveNonAdminUsers(db, monthsInactive) {
   return result.changes || 0;
 }
 
+async function deleteOldHiddenAssessments(db, monthsHidden) {
+  const cutoffMs = Date.now() - monthsToMs(monthsHidden);
+  const cutoffSec = Math.floor(cutoffMs / 1000);
+
+  // Hidden assessments only (used or unused). Child rows cascade via FKs.
+  const result = await run(
+    db,
+    `DELETE FROM assessment
+     WHERE isHidden = 1
+       AND created_at IS NOT NULL
+       AND created_at < ?`,
+    [cutoffSec]
+  );
+
+  return result.changes || 0;
+}
+
 function scheduleWeeklyInactiveUserCleanup(db, options = {}) {
   const monthsInactive = Number(process.env.INACTIVITY_DELETE_MONTHS || options.monthsInactive || 15);
+  const monthsHidden = Number(
+    process.env.HIDDEN_ASSESSMENT_DELETE_MONTHS || options.monthsHiddenAssessment || 9
+  );
   const weekMs = Number(process.env.CLEANUP_INTERVAL_DAYS || options.intervalDays || 7) * 24 * 60 * 60 * 1000;
 
   let timer = null;
 
   async function tick() {
     try {
-      const deleted = await deleteInactiveNonAdminUsers(db, monthsInactive);
-      if (deleted > 0) {
+      const deletedUsers = await deleteInactiveNonAdminUsers(db, monthsInactive);
+      if (deletedUsers > 0) {
         // eslint-disable-next-line no-console
-        console.log(`Inactive user cleanup: deleted ${deleted} user(s) (>${monthsInactive} months).`);
+        console.log(`Inactive user cleanup: deleted ${deletedUsers} user(s) (>${monthsInactive} months).`);
       }
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error("Inactive user cleanup failed:", err);
+    }
+
+    try {
+      const deletedAssessments = await deleteOldHiddenAssessments(db, monthsHidden);
+      if (deletedAssessments > 0) {
+        // eslint-disable-next-line no-console
+        console.log(
+          `Hidden assessment cleanup: deleted ${deletedAssessments} assessment(s) (hidden >${monthsHidden} months from creation).`
+        );
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("Hidden assessment cleanup failed:", err);
     }
   }
 
@@ -51,5 +84,6 @@ function scheduleWeeklyInactiveUserCleanup(db, options = {}) {
 
 module.exports = {
   deleteInactiveNonAdminUsers,
+  deleteOldHiddenAssessments,
   scheduleWeeklyInactiveUserCleanup,
 };

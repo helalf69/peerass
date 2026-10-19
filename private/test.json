@@ -1,76 +1,76 @@
 {
-  "savedAt": 1777891858,
-  "idAssessment": 3,
+  "savedAt": 1792393999,
+  "idAssessment": 4,
   "payload": {
-    "idSub": 2,
-    "assessmentDate": "2026-05-07",
-    "title": "Sikkerhet og personvern",
-    "description": "Presentasjon av eget valgt tema: VPN, Bitlocker, USB eller Copyright",
+    "idSub": 3,
+    "assessmentDate": "2026-10-20",
+    "title": "Presentasjon sikkerhet",
+    "description": "Ukentlig gjennomgang av diverse tema innen sikkerhet med utgangspunkt i saker fra nyhetene.",
     "itemCount": 3,
     "items": [
       {
         "sortOrder": 0,
-        "name": "Presentasjonen",
-        "description": "Tydelig språk, fin presentasjon",
+        "name": "Presentasjon og framføring",
+        "description": "Dette punktet vurderer hvordan du formidler innholdet til publikum. Det legges vekt på struktur, bruk av visuelle hjelpemidler og hvor tydelig og engasjerende framføringen er.",
         "scaleType": "1-3",
         "scaleMin": 1,
         "scaleMax": 3,
         "points": [
           {
             "value": 1,
-            "description": "Kan bli bedre, ja"
+            "description": "Utydelig, lite struktur, mye opplesning, svake visuelle hjelpemidler"
           },
           {
             "value": 2,
-            "description": "Bra"
+            "description": "Tydelig, grei struktur, delvis selvstendig, relevante visuelle hjelpemidler"
           },
           {
             "value": 3,
-            "description": "Perfekt"
+            "description": "Klar, godt strukturert, selvstendig, engasjerende, sterke visuelle hjelpemidler"
           }
         ]
       },
       {
         "sortOrder": 1,
-        "name": "Faglig nivå",
-        "description": "Bruker faguttrykk. bruker de rett og forklarer det som trengs.",
+        "name": "IT-faglig innhold og forståelse",
+        "description": "Dette punktet vurderer hvor godt du viser forståelse for temaet du presenterer. Det legges vekt på bruk av fagbegreper, faglig korrekthet og evne til å forklare sammenhenger.",
         "scaleType": "1-3",
         "scaleMin": 1,
         "scaleMax": 3,
         "points": [
           {
             "value": 1,
-            "description": "Kan bli bedre, ja"
+            "description": "Få fagbegreper, overflatisk forståelse, unøyaktige forklaringer, svak kildebruk"
           },
           {
             "value": 2,
-            "description": "Bra"
+            "description": "Relevante fagbegreper, grunnleggende forståelse, gode forklaringer, bruker kilder"
           },
           {
             "value": 3,
-            "description": "Perfekt"
+            "description": "Presise fagbegreper, solid forståelse, gode sammenhenger, reflektert kildebruk"
           }
         ]
       },
       {
         "sortOrder": 2,
-        "name": "Yrkesutøvelse",
-        "description": "God eksempler, nyttig informasjon.",
+        "name": "Etisk og samfunnsbevisst refleksjon",
+        "description": "Dette punktet vurderer hvordan du reflekterer over teknologiens betydning for mennesker, samfunn og miljø. Det legges vekt på kritisk tenkning, kildekritikk og evnen til å diskutere konsekvenser og etiske problemstillinger.",
         "scaleType": "1-3",
         "scaleMin": 1,
         "scaleMax": 3,
         "points": [
           {
             "value": 1,
-            "description": "Kan bli bedre, ja"
+            "description": "Lite refleksjon, få konsekvenser, svak kildekritikk, begrenset samfunnsforståelse"
           },
           {
             "value": 2,
-            "description": "Bra"
+            "description": "Noe refleksjon, ser konsekvenser, enkel kildekritikk, viser samfunnsforståelse"
           },
           {
             "value": 3,
-            "description": "Perfekt"
+            "description": "God refleksjon, kritisk tenkning, etiske vurderinger, kildebevissthet, samfunns- og miljøperspektiv"
           }
         ]
       }

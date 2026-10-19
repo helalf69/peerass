@@ -1,13 +1,23 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const sqlite3 = require("sqlite3").verbose();
 
 const privateDir = __dirname;
 const dbPath = path.join(privateDir, "peerass.db");
 const DEFAULT_PASSWORD = "Java5cript";
 const DEFAULT_SALT = "peerass-default-salt";
 const DB_CLIENT = String(process.env.DB_CLIENT || "sqlite").trim().toLowerCase();
+
+function loadSqlite3() {
+  try {
+    return require("sqlite3").verbose();
+  } catch (err) {
+    throw new Error(
+      `sqlite3 is required for DB_CLIENT=sqlite but could not be loaded (${err.message}). ` +
+        `Install build tools and run: npm install sqlite3 — or set DB_CLIENT=mysql in .env`
+    );
+  }
+}
 
 function hashWithSalt(password, salt) {
   const iterations = 120000;
@@ -370,6 +380,7 @@ async function initDatabase() {
   }
   if (!fs.existsSync(privateDir)) fs.mkdirSync(privateDir, { recursive: true });
 
+  const sqlite3 = loadSqlite3();
   const db = new sqlite3.Database(dbPath);
   // eslint-disable-next-line no-console
   console.log(`SQLite database path: ${dbPath}`);

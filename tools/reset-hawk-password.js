@@ -38,7 +38,14 @@ async function openDb() {
     };
   }
 
-  const sqlite3 = require("sqlite3").verbose();
+  let sqlite3;
+  try {
+    sqlite3 = require("sqlite3").verbose();
+  } catch (err) {
+    throw new Error(
+      `sqlite3 could not be loaded (${err.message}). Use DB_CLIENT=mysql or install sqlite3.`
+    );
+  }
   const dbPath = path.join(__dirname, "..", "private", "peerass.db");
   const db = new sqlite3.Database(dbPath);
   return {

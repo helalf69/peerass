@@ -311,6 +311,17 @@ body {
   letter-spacing: -0.01em;
 }
 
+.admin-h3 {
+  margin: 16px 0 8px;
+  font-size: 0.98rem;
+}
+
+.edit-subject-panel {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
 .table-wrap {
   overflow: auto;
   border-radius: 12px;

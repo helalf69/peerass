@@ -312,6 +312,136 @@ function registerRoutes(app, deps) {
     }
   });
 
+  app.get("/api/admin/subject/:idSub", async (req, res) => {
+    try {
+      const auth = await requireAdminActor(req);
+      if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
+      const idSub = Number(req.params.idSub);
+      if (!Number.isFinite(idSub) || idSub <= 0) return res.status(400).json({ ok: false, message: "Invalid subject." });
+
+      const subject = await get(getDb(), `SELECT idSub, subName FROM subject WHERE idSub = ? AND idUser = ?`, [
+        idSub,
+        auth.actor.idUser,
+      ]);
+      if (!subject) return res.status(404).json({ ok: false, message: "Subject not found." });
+
+      const students = await all(
+        getDb(),
+        `SELECT u.idUser, u.Name as name, u.Password as passwordHash, u.last_used as lastUsed
+         FROM user u
+         JOIN userSubject us ON us.idUser = u.idUser
+         WHERE us.idSub = ? AND u.isAdmin = 0
+         ORDER BY u.Name COLLATE NOCASE ASC`,
+        [idSub]
+      );
+
+      return res.json({
+        ok: true,
+        subject: { idSub: subject.idSub, subName: subject.subName },
+        students: students.map((s) => ({
+          idUser: s.idUser,
+          name: s.name,
+          passwordChanged: !verifyPassword(DEFAULT_PASSWORD, s.passwordHash),
+          lastUsed: s.lastUsed == null ? null : Number(s.lastUsed),
+        })),
+      });
+    } catch (_err) {
+      return res.status(500).json({ ok: false, message: "Could not load subject." });
+    }
+  });
+
+  app.post("/api/admin/update-subject", async (req, res) => {
+    try {
+      const auth = await requireAdminActor(req);
+      if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
+      const idSub = Number(req.body.idSub);
+      const subName = String(req.body.subName || "").trim();
+      if (!Number.isFinite(idSub) || idSub <= 0) return res.status(400).json({ ok: false, message: "Invalid subject." });
+      if (!subName) return res.status(400).json({ ok: false, message: "Subject name is required." });
+      if (subName.length < 2) return res.status(400).json({ ok: false, message: "Subject name must be at least 2 characters." });
+
+      const subject = await get(getDb(), `SELECT idSub FROM subject WHERE idSub = ? AND idUser = ?`, [idSub, auth.actor.idUser]);
+      if (!subject) return res.status(404).json({ ok: false, message: "Subject not found." });
+
+      await run(getDb(), `UPDATE subject SET subName = ? WHERE idSub = ? AND idUser = ?`, [subName, idSub, auth.actor.idUser]);
+      return res.json({ ok: true, message: `Subject renamed to ${subName}.`, subject: { idSub, subName } });
+    } catch (err) {
+      if (String(err.message || "").includes("UNIQUE")) return res.status(409).json({ ok: false, message: "Subject name already exists." });
+      return res.status(500).json({ ok: false, message: "Could not update subject." });
+    }
+  });
+
+  app.post("/api/admin/remove-user-from-subject", async (req, res) => {
+    try {
+      const auth = await requireAdminActor(req);
+      if (!auth.ok) return res.status(auth.status).json({ ok: false, message: auth.message });
+      const idSub = Number(req.body.idSub);
+      const idUser = Number(req.body.idUser);
+      const deleteIfOrphan = req.body.deleteIfOrphan;
+      if (!Number.isFinite(idSub) || idSub <= 0) return res.status(400).json({ ok: false, message: "Invalid subject." });
+      if (!Number.isFinite(idUser) || idUser <= 0) return res.status(400).json({ ok: false, message: "Invalid user." });
+
+      const subject = await get(getDb(), `SELECT idSub, subName FROM subject WHERE idSub = ? AND idUser = ?`, [
+        idSub,
+        auth.actor.idUser,
+      ]);
+      if (!subject) return res.status(404).json({ ok: false, message: "Subject not found." });
+
+      const membership = await get(
+        getDb(),
+        `SELECT u.idUser, u.Name as name
+         FROM user u
+         JOIN userSubject us ON us.idUser = u.idUser
+         WHERE us.idSub = ? AND u.idUser = ? AND u.isAdmin = 0`,
+        [idSub, idUser]
+      );
+      if (!membership) return res.status(404).json({ ok: false, message: "Student is not in this subject." });
+
+      const otherLinks = await get(
+        getDb(),
+        `SELECT COUNT(*) as cnt FROM userSubject WHERE idUser = ? AND idSub != ?`,
+        [idUser, idSub]
+      );
+      const onlyThisSubject = Number(otherLinks && otherLinks.cnt ? otherLinks.cnt : 0) === 0;
+
+      if (onlyThisSubject && deleteIfOrphan === undefined) {
+        return res.json({
+          ok: true,
+          needsOrphanDecision: true,
+          idSub,
+          idUser: membership.idUser,
+          name: membership.name,
+          subName: subject.subName,
+        });
+      }
+
+      await run(getDb(), "BEGIN IMMEDIATE");
+      try {
+        await run(getDb(), `DELETE FROM userSubject WHERE idUser = ? AND idSub = ?`, [idUser, idSub]);
+        let deletedUser = false;
+        if (onlyThisSubject && deleteIfOrphan === true) {
+          await run(getDb(), `DELETE FROM user WHERE idUser = ? AND isAdmin = 0`, [idUser]);
+          deletedUser = true;
+        }
+        await run(getDb(), "COMMIT");
+
+        return res.json({
+          ok: true,
+          removedFromSubject: true,
+          deletedUser,
+          message: deletedUser
+            ? `Removed ${membership.name} from ${subject.subName} and deleted the user account (no other subjects).`
+            : `Removed ${membership.name} from ${subject.subName}.`,
+        });
+      } catch (err) {
+        await safeRollback(getDb(), run);
+        throw err;
+      }
+    } catch (_err) {
+      return res.status(500).json({ ok: false, message: "Could not remove student from subject." });
+    }
+  });
+
   app.post("/api/admin/copy-subject-users", async (req, res) => {
     try {
       const auth = await requireAdminActor(req);

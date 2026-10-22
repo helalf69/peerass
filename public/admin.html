@@ -35,6 +35,49 @@
           <p id="subject-message" class="login-message" aria-live="polite"></p>
         </form>
 
+        <section class="admin-form" aria-labelledby="edit-subject-heading">
+          <h2 id="edit-subject-heading" class="admin-h2">Edit subject</h2>
+          <label for="edit-subject-select">Choose subject</label>
+          <div class="admin-inline">
+            <select id="edit-subject-select"></select>
+            <button type="button" class="button button-sm" id="edit-subject-load-btn">Open</button>
+          </div>
+          <p id="edit-subject-message" class="login-message" aria-live="polite"></p>
+
+          <div id="edit-subject-panel" class="edit-subject-panel hidden">
+            <form id="edit-subject-form" class="login-form">
+              <label for="edit-subject-name">Subject name</label>
+              <div class="admin-inline">
+                <input
+                  id="edit-subject-name"
+                  name="subName"
+                  type="text"
+                  autocomplete="off"
+                  required
+                  maxlength="255"
+                />
+                <button type="submit" class="button button-sm primary">Save name</button>
+              </div>
+            </form>
+
+            <h3 class="admin-h3">Enlisted students</h3>
+            <div class="table-wrap">
+              <table class="admin-table" aria-label="Students in subject">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Password changed</th>
+                    <th>Last login</th>
+                    <th class="admin-actions-col">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="edit-subject-students-tbody"></tbody>
+              </table>
+            </div>
+            <p id="edit-subject-students-message" class="login-message" aria-live="polite"></p>
+          </div>
+        </section>
+
         <form id="delete-subject-form" class="login-form admin-form">
           <label for="delete-subject-select">Delete subject</label>
           <div class="admin-inline">
@@ -133,6 +176,14 @@
       const subjectSelect = document.getElementById("subject-select");
       const copySourceSelect = document.getElementById("copy-source-subject");
       const deleteSubjectSelect = document.getElementById("delete-subject-select");
+      const editSubjectSelect = document.getElementById("edit-subject-select");
+      const editSubjectLoadBtn = document.getElementById("edit-subject-load-btn");
+      const editSubjectPanel = document.getElementById("edit-subject-panel");
+      const editSubjectForm = document.getElementById("edit-subject-form");
+      const editSubjectName = document.getElementById("edit-subject-name");
+      const editSubjectMessage = document.getElementById("edit-subject-message");
+      const editSubjectStudentsTbody = document.getElementById("edit-subject-students-tbody");
+      const editSubjectStudentsMessage = document.getElementById("edit-subject-students-message");
       const newSubjectInput = document.getElementById("new-subject-name");
       const copyNewSubjectInput = document.getElementById("copy-new-subject-name");
       const usersTbody = document.getElementById("users-tbody");
@@ -145,6 +196,7 @@
       const orphanCancelBtn = document.getElementById("orphan-cancel");
 
       let pendingDeleteIdSub = null;
+      let editingIdSub = null;
 
       function setMsg(el, text, isError = false) {
         el.textContent = text;
@@ -174,17 +226,20 @@
 
         const subjects = data.subjects || [];
         const options = subjects.map(
-          (s) => `<option value="${s.idSub}">${s.subName}</option>`
+          (s) => `<option value="${s.idSub}">${esc(s.subName)}</option>`
         );
-        subjectSelect.innerHTML = options.length
-          ? options.join("")
-          : `<option value="">No subject yet</option>`;
-        copySourceSelect.innerHTML = options.length
-          ? options.join("")
-          : `<option value="">No subject yet</option>`;
-        deleteSubjectSelect.innerHTML = options.length
-          ? options.join("")
-          : `<option value="">No subject yet</option>`;
+        const empty = `<option value="">No subject yet</option>`;
+        subjectSelect.innerHTML = options.length ? options.join("") : empty;
+        copySourceSelect.innerHTML = options.length ? options.join("") : empty;
+        deleteSubjectSelect.innerHTML = options.length ? options.join("") : empty;
+        editSubjectSelect.innerHTML = options.length ? options.join("") : empty;
+
+        if (editingIdSub && subjects.some((s) => Number(s.idSub) === Number(editingIdSub))) {
+          editSubjectSelect.value = String(editingIdSub);
+        } else if (editingIdSub) {
+          editingIdSub = null;
+          editSubjectPanel.classList.add("hidden");
+        }
       }
 
       function esc(s) {
@@ -194,6 +249,56 @@
           .replaceAll(">", "&gt;")
           .replaceAll('"', "&quot;")
           .replaceAll("'", "&#39;");
+      }
+
+      function formatLastLogin(sec) {
+        if (sec == null) return "never";
+        const d = new Date(Number(sec) * 1000);
+        return Number.isNaN(d.getTime()) ? "never" : d.toLocaleString();
+      }
+
+      async function loadEditSubject(idSub) {
+        if (!Number.isFinite(idSub) || idSub <= 0) {
+          setMsg(editSubjectMessage, "Select a subject.", true);
+          return;
+        }
+        setMsg(editSubjectMessage, "Loading subject...");
+        setMsg(editSubjectStudentsMessage, "");
+        const response = await fetch(`/api/admin/subject/${encodeURIComponent(idSub)}`);
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.message || "Could not load subject.");
+
+        editingIdSub = Number(data.subject.idSub);
+        editSubjectName.value = data.subject.subName || "";
+        editSubjectPanel.classList.remove("hidden");
+
+        const students = data.students || [];
+        editSubjectStudentsTbody.innerHTML = students.length
+          ? students
+              .map((s) => {
+                const mark = s.passwordChanged ? "✓" : "✗";
+                const cls = s.passwordChanged ? "ok" : "bad";
+                return `<tr>
+                  <td>${esc(s.name)}</td>
+                  <td class="${cls}" aria-label="${s.passwordChanged ? "changed" : "default"}">${mark}</td>
+                  <td>${esc(formatLastLogin(s.lastUsed))}</td>
+                  <td class="admin-actions-col">
+                    <button
+                      type="button"
+                      class="button button-sm danger admin-remove-student-btn"
+                      data-id-user="${s.idUser}"
+                      data-user-name="${esc(s.name)}"
+                    >
+                      Remove
+                    </button>
+                  </td>
+                </tr>`;
+              })
+              .join("")
+          : `<tr><td colspan="4">No students enlisted yet.</td></tr>`;
+
+        setMsg(editSubjectMessage, `Editing “${data.subject.subName}”.`);
+        setMsg(editSubjectStudentsMessage, `${students.length} student(s).`);
       }
 
       async function loadUsers() {
@@ -253,8 +358,96 @@
           }
           setMsg(usersMessage, data.message || "Password reset.");
           await loadUsers();
+          if (editingIdSub) await loadEditSubject(editingIdSub);
         } catch (_err) {
           setMsg(usersMessage, "Network error. Try again.", true);
+          btn.disabled = false;
+        }
+      });
+
+      editSubjectLoadBtn.addEventListener("click", async () => {
+        const idSub = Number(editSubjectSelect.value);
+        try {
+          await loadEditSubject(idSub);
+        } catch (err) {
+          setMsg(editSubjectMessage, String(err.message || err), true);
+          editSubjectPanel.classList.add("hidden");
+        }
+      });
+
+      editSubjectForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        if (!editingIdSub) {
+          setMsg(editSubjectMessage, "Open a subject first.", true);
+          return;
+        }
+        const subName = editSubjectName.value.trim();
+        setMsg(editSubjectMessage, "Saving...");
+        try {
+          const response = await fetch("/api/admin/update-subject", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ idSub: editingIdSub, subName }),
+          });
+          const data = await response.json();
+          if (!response.ok || !data.ok) {
+            setMsg(editSubjectMessage, data.message || "Could not update subject.", true);
+            return;
+          }
+          setMsg(editSubjectMessage, data.message || "Subject updated.");
+          await loadSubjects();
+          editSubjectSelect.value = String(editingIdSub);
+        } catch (_err) {
+          setMsg(editSubjectMessage, "Network error. Try again.", true);
+        }
+      });
+
+      editSubjectStudentsTbody.addEventListener("click", async (e) => {
+        const btn = e.target.closest(".admin-remove-student-btn");
+        if (!btn || !editingIdSub) return;
+        const idUser = Number(btn.getAttribute("data-id-user"));
+        const userName = btn.getAttribute("data-user-name") || "";
+        if (!Number.isFinite(idUser) || idUser <= 0) return;
+        if (!confirm(`Remove "${userName}" from this subject?`)) return;
+
+        btn.disabled = true;
+        setMsg(editSubjectStudentsMessage, "Removing...");
+        try {
+          const first = await fetch("/api/admin/remove-user-from-subject", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ idSub: editingIdSub, idUser }),
+          });
+          const firstData = await first.json();
+          if (!first.ok || !firstData.ok) {
+            setMsg(editSubjectStudentsMessage, firstData.message || "Could not remove student.", true);
+            btn.disabled = false;
+            return;
+          }
+
+          let result = firstData;
+          if (firstData.needsOrphanDecision) {
+            const deleteAccount = confirm(
+              `"${userName}" has no other subjects. Delete this user account as well?`
+            );
+            const second = await fetch("/api/admin/remove-user-from-subject", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ idSub: editingIdSub, idUser, deleteIfOrphan: deleteAccount }),
+            });
+            result = await second.json();
+            if (!second.ok || !result.ok) {
+              setMsg(editSubjectStudentsMessage, result.message || "Could not remove student.", true);
+              btn.disabled = false;
+              return;
+            }
+          }
+
+          setMsg(editSubjectStudentsMessage, result.message || "Student removed.");
+          await loadEditSubject(editingIdSub);
+          await loadUsers();
+        } catch (_err) {
+          setMsg(editSubjectStudentsMessage, "Network error. Try again.", true);
           btn.disabled = false;
         }
       });
@@ -367,6 +560,9 @@
           userForm.reset();
           await loadSubjects();
           await loadUsers();
+          if (editingIdSub && Number(idSub) === Number(editingIdSub)) {
+            await loadEditSubject(editingIdSub);
+          }
           nameInput.focus();
         } catch (_err) {
           setMsg(message, "Network error. Try again.", true);
